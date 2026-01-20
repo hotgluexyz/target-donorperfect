@@ -62,6 +62,19 @@ class DonorsSink(DonorPerfectSink):
 
         return params
 
+    def upsert_record(self, record: dict, context: dict) -> None:
+        """Upsert the record."""
+        method = "GET"
+
+        # get donor_id for updates
+        donor_id = record.pop("donor_id", None)
+
+        # send request
+        response = self.request_api(method, params=record)
+        res_json = self.parse_xml_response(response.text)
+        id = donor_id or res_json.get("", None)
+        return id, True, dict()
+
 
 class ContactsSink(DonorPerfectSink):
     """DonorPerfect target sink class."""
@@ -78,18 +91,28 @@ class ContactsSink(DonorPerfectSink):
         # process record fields
         fields = {
             "@contact_id": record.get("contact_id", 0),
-            "@donor_id": record.get("donor_id", None),
-            "@activity_code": record.get("activity_code", None),
-            "@mailing_code": record.get("middle_name", None),
-            "@by_whom": record.get("by_whom", None),
-            "@contact_date": record.get("contact_date", None),
-            "@due_date": record.get("due_date", None),
-            "@due_time": record.get("due_time", None),
-            "@completed_date": record.get("completed_date", None),
-            "@comment": record.get("comment", None),
-            "@document_path": record.get("document_path", None),
-            "@user_id": record.get("user_id", None)
+            "@donor_id": record.get("donor_id", ""),
+            "@activity_code": record.get("activity_code", ""),
+            "@mailing_code": record.get("middle_name", ""),
+            "@by_whom": record.get("by_whom", ""),
+            "@contact_date": record.get("contact_date", ""),
+            "@due_date": record.get("due_date", ""),
+            "@due_time": record.get("due_time", ""),
+            "@completed_date": record.get("completed_date", ""),
+            "@comment": record.get("comment", ""),
+            "@document_path": record.get("document_path", ""),
+            "@user_id": record.get("user_id", "")
         }
-        params["params"] = ",".join([f"{k}={v}" if isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
+        params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
 
         return params
+
+    def upsert_record(self, record: dict, context: dict) -> None:
+        """Upsert the record."""
+        method = "GET"
+
+        # send request
+        response = self.request_api(method, params=record)
+        res_json = self.parse_xml_response(response.text)
+        id = res_json.get("", None)
+        return id, True, dict()

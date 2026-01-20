@@ -8,20 +8,6 @@ class DonorPerfectSink(HotglueSink):
     base_url = "https://www.donorperfect.net/prod/xmlrequest.asp"
     endpoint = ""
 
-
-    def upsert_record(self, record: dict, context: dict) -> None:
-        """Upsert the record."""
-        method = "GET"
-        # add authentication
-        record["apikey"] = unquote(self.config.get("api_key"))
-        donor_id = record.pop("donor_id", None)
-
-        # send request
-        response = self.request_api(method, params=record)
-        res_json = self.parse_xml_response(response.text)
-        id = donor_id or res_json.get("donor_id", None)
-        return id, True, dict()
-
     def parse_xml_response(self, response: str) -> dict:
         """Parse the XML response."""
         res_json = xmltodict.parse(response).get("result", {}).get("record")
@@ -30,3 +16,11 @@ class DonorPerfectSink(HotglueSink):
             return {field["@name"]: field["@value"] for field in fields}
         else:
             return {fields["@name"]: fields["@value"]}
+
+    def request_api(self, http_method, endpoint=None, params={}, request_data=None, headers={}, verify=True):
+        """Request records from REST endpoint(s), returning response records."""
+        # add authentication
+        params["apikey"] = unquote(self.config.get("api_key"))
+        # send request
+        resp = self._request(http_method, endpoint, params, request_data, headers, verify=verify)
+        return resp
