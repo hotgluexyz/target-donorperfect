@@ -19,7 +19,7 @@ class DonorsSink(DonorPerfectSink):
         existing_record = {}
         # if donor_id, get current values, if empty values are sent the record will be updated with empty values
         if record.get("donor_id", None):
-            response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_key"))})
+            response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)

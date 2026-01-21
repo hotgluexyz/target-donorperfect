@@ -14,7 +14,7 @@ class TargetDonorPerfect(TargetHotglue):
     name = "target-donorperfect"
     config_jsonschema = th.PropertiesList(
         th.Property(
-            "api_key",
+            "api_token",
             th.StringType,
             description="The path to the target output file"
         )
