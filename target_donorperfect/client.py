@@ -20,7 +20,7 @@ class DonorPerfectSink(HotglueSink):
     def request_api(self, http_method, endpoint=None, params={}, request_data=None, headers={}, verify=True):
         """Request records from REST endpoint(s), returning response records."""
         # add authentication
-        params["apikey"] = unquote(self.config.get("api_key"))
+        params["apikey"] = unquote(self.config.get("api_token"))
         # send request
         resp = self._request(http_method, endpoint, params, request_data, headers, verify=verify)
         return resp
