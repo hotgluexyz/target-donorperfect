@@ -28,36 +28,40 @@ class DonorsSink(DonorPerfectSink):
         existing_record.update(record)
         # process data
         # process record fields
+
         fields = {
-            "@donor_id": existing_record.get("donor_id", 0),
-            "@first_name": existing_record.get("first_name", ""),
-            "@last_name": existing_record.get("last_name", ""),
-            "@middle_name": existing_record.get("middle_name", ""),
-            "@suffix": existing_record.get("suffix", ""),
-            "@title": existing_record.get("title", ""),
-            "@salutation": existing_record.get("salutation", ""),
-            "@prof_title": existing_record.get("prof_title", ""),
-            "@opt_line": existing_record.get("opt_line", ""),
-            "@address": existing_record.get("address", ""),
-            "@address2": existing_record.get("address2", ""),
-            "@city": existing_record.get("city", ""),
-            "@state": existing_record.get("state", ""),
-            "@zip": existing_record.get("zip", ""),
-            "@country": existing_record.get("country", ""),
-            "@address_type": existing_record.get("address_type", ""),
-            "@home_phone": existing_record.get("home_phone", ""),
-            "@business_phone": existing_record.get("business_phone", ""),
-            "@fax_phone": existing_record.get("fax_phone", ""),
-            "@mobile_phone": existing_record.get("mobile_phone", ""),
-            "@email": existing_record.get("email", ""),
-            "@org_rec": existing_record.get("org_rec", ""),
-            "@donor_type": existing_record.get("donor_type", ""),
-            "@nomail": existing_record.get("nomail", ""),
-            "@nomail_reason": existing_record.get("nomail_reason", ""),
-            "@narrative": existing_record.get("narrative", ""),
-            "@donor_rcpt_type": existing_record.get("donor_rcpt_type", ""),
-            "@user_id": existing_record.get("user_id", ""),
+            k: self.escape_single_quotes(v) for k, v in {
+                "@donor_id": existing_record.get("donor_id", 0),
+                "@first_name": existing_record.get("first_name", ""),
+                "@last_name": existing_record.get("last_name", ""),
+                "@middle_name": existing_record.get("middle_name", ""),
+                "@suffix": existing_record.get("suffix", ""),
+                "@title": existing_record.get("title", ""),
+                "@salutation": existing_record.get("salutation", ""),
+                "@prof_title": existing_record.get("prof_title", ""),
+                "@opt_line": existing_record.get("opt_line", ""),
+                "@address": existing_record.get("address", ""),
+                "@address2": existing_record.get("address2", ""),
+                "@city": existing_record.get("city", ""),
+                "@state": existing_record.get("state", ""),
+                "@zip": existing_record.get("zip", ""),
+                "@country": existing_record.get("country", ""),
+                "@address_type": existing_record.get("address_type", ""),
+                "@home_phone": existing_record.get("home_phone", ""),
+                "@business_phone": existing_record.get("business_phone", ""),
+                "@fax_phone": existing_record.get("fax_phone", ""),
+                "@mobile_phone": existing_record.get("mobile_phone", ""),
+                "@email": existing_record.get("email", ""),
+                "@org_rec": existing_record.get("org_rec", ""),
+                "@donor_type": existing_record.get("donor_type", ""),
+                "@nomail": existing_record.get("nomail", ""),
+                "@nomail_reason": existing_record.get("nomail_reason", ""),
+                "@narrative": existing_record.get("narrative", ""),
+                "@donor_rcpt_type": existing_record.get("donor_rcpt_type", ""),
+                "@user_id": existing_record.get("user_id", ""),
+            }.items()
         }
+
         params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
 
         return params
@@ -90,6 +94,7 @@ class ContactsSink(DonorPerfectSink):
         params["action"] = "dp_savecontact"
         # process record fields
         fields = {
+            k: self.escape_single_quotes(v) for k, v in {
             "@contact_id": record.get("contact_id", 0),
             "@donor_id": record.get("donor_id", ""),
             "@activity_code": record.get("activity_code", ""),
@@ -102,6 +107,7 @@ class ContactsSink(DonorPerfectSink):
             "@comment": record.get("comment", ""),
             "@document_path": record.get("document_path", ""),
             "@user_id": record.get("user_id", "")
+            }.items()
         }
         params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
 

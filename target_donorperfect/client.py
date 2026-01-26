@@ -24,3 +24,10 @@ class DonorPerfectSink(HotglueSink):
         # send request
         resp = self._request(http_method, endpoint, params, request_data, headers, verify=verify)
         return resp
+
+    
+    # Escape single quotes in string values to avoid breaking the params format
+    def escape_single_quotes(self, value):
+        if isinstance(value, str):
+            return value.replace("'", "''")
+        return value
