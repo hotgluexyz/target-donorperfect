@@ -106,7 +106,8 @@ class ContactsSink(DonorPerfectSink):
             "@completed_date": record.get("completed_date", ""),
             "@comment": record.get("comment", ""),
             "@document_path": record.get("document_path", ""),
-            "@user_id": record.get("user_id", "")
+            "@user_id": record.get("user_id", ""),
+            "@contact_email": record.get("contact_email", "")
             }.items()
         }
         params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
