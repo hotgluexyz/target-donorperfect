@@ -108,7 +108,11 @@ class ContactsSink(DonorPerfectSink):
             "@document_path": record.get("document_path", ""),
             "@user_id": record.get("user_id", ""),
             "@contact_email": record.get("contact_email", ""),
-            "@em_campaign_status": record.get("em_campaign_status", "")
+            "@em_campaign_status": record.get("em_campaign_status", ""),
+            "@em_campaign": record.get("em_campaign", ""),
+            "@em_event_status_date": record.get("em_event_status_date", ""),
+            "@em_bounce_reason": record.get("em_bounce_reason", ""),
+            "@contact_state": record.get("contact_state", "")
             }.items()
         }
         params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
