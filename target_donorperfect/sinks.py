@@ -69,30 +69,41 @@ class DonorsSink(DonorPerfectSink):
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
         method = "GET"
+        state_updates = dict()
 
         # get donor_id for updates
         donor_id = record.pop("donor_id", None)
-
         # send request
         response = self.request_api(method, params=record)
         res_json = self.parse_xml_response(response.text)
-        id = donor_id or res_json.get("", None)
-        return id, True, dict()
+        if donor_id:
+            state_updates['is_updated'] = True
+            return donor_id, True, state_updates
+
+        id = res_json.get("", None)
+        return id, True, state_updates
 
 
 class ContactsSink(DonorPerfectSink):
     """DonorPerfect target sink class."""
 
-    name = "contacts"
+    name = "dp_contacts"
 
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Process the record."""
-        
-        # process data
         params = {}
+        existing_record = {}
+
+        if record.get("contact_id", None):
+            response = self.request_api("GET", params={"action": f"select * FROM dpcontact WHERE contact_id='{record['contact_id']}'", "apikey": unquote(self.config.get("api_token"))})
+            existing_record = self.parse_xml_response(response.text)
+            # add contact_id to existing record for state, updates always return contact_id 0
+            params["contact_id"] = existing_record.get("contact_id", 0)
+
+        # fill empty values with existing values
+        existing_record.update(record)
 
         params["action"] = "dp_savecontact"
-        # process record fields
         fields = {
             k: self.escape_single_quotes(v) for k, v in {
             "@contact_id": record.get("contact_id", 0),
@@ -122,9 +133,14 @@ class ContactsSink(DonorPerfectSink):
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
         method = "GET"
+        state_updates = dict()
+        contact_id = record.pop("contact_id", None)
 
-        # send request
         response = self.request_api(method, params=record)
         res_json = self.parse_xml_response(response.text)
-        id = res_json.get("", None)
-        return id, True, dict()
+        if contact_id:
+            state_updates['is_updated'] = True
+            return contact_id, True, state_updates
+
+        id = contact_id or res_json.get("", None)
+        return id, True, state_updates
