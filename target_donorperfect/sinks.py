@@ -106,24 +106,24 @@ class ContactsSink(DonorPerfectSink):
         params["action"] = "dp_savecontact"
         fields = {
             k: self.escape_single_quotes(v) for k, v in {
-            "@contact_id": record.get("contact_id", 0),
-            "@donor_id": record.get("donor_id", ""),
-            "@activity_code": record.get("activity_code", ""),
-            "@mailing_code": record.get("middle_name", ""),
-            "@by_whom": record.get("by_whom", ""),
-            "@contact_date": record.get("contact_date", ""),
-            "@due_date": record.get("due_date", ""),
-            "@due_time": record.get("due_time", ""),
-            "@completed_date": record.get("completed_date", ""),
-            "@comment": record.get("comment", ""),
-            "@document_path": record.get("document_path", ""),
-            "@user_id": record.get("user_id", ""),
-            "@contact_email": record.get("contact_email", ""),
-            "@em_campaign_status": record.get("em_campaign_status", ""),
-            "@em_campaign": record.get("em_campaign", ""),
-            "@em_event_status_date": record.get("em_event_status_date", ""),
-            "@em_bounce_reason": record.get("em_bounce_reason", ""),
-            "@contact_state": record.get("contact_state", "")
+            "@contact_id": existing_record.get("contact_id", 0),
+            "@donor_id": existing_record.get("donor_id", ""),
+            "@activity_code": existing_record.get("activity_code", ""),
+            "@mailing_code": existing_record.get("middle_name", ""),
+            "@by_whom": existing_record.get("by_whom", ""),
+            "@contact_date": existing_record.get("contact_date", ""),
+            "@due_date": existing_record.get("due_date", ""),
+            "@due_time": existing_record.get("due_time", ""),
+            "@completed_date": existing_record.get("completed_date", ""),
+            "@comment": existing_record.get("comment", ""),
+            "@document_path": existing_record.get("document_path", ""),
+            "@user_id": existing_record.get("user_id", ""),
+            "@contact_email": existing_record.get("contact_email", ""),
+            "@em_campaign_status": existing_record.get("em_campaign_status", ""),
+            "@em_campaign": existing_record.get("em_campaign", ""),
+            "@em_event_status_date": existing_record.get("em_event_status_date", ""),
+            "@em_bounce_reason": existing_record.get("em_bounce_reason", ""),
+            "@contact_state": existing_record.get("contact_state", "")
             }.items()
         }
         params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
@@ -142,5 +142,5 @@ class ContactsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return contact_id, True, state_updates
 
-        id = contact_id or res_json.get("", None)
+        id = res_json.get("", None)
         return id, True, state_updates
