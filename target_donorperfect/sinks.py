@@ -109,7 +109,7 @@ class ContactsSink(DonorPerfectSink):
             "@contact_id": existing_record.get("contact_id", 0),
             "@donor_id": existing_record.get("donor_id", ""),
             "@activity_code": existing_record.get("activity_code", ""),
-            "@mailing_code": existing_record.get("middle_name", ""),
+            "@mailing_code": existing_record.get("mailing_code", ""),
             "@by_whom": existing_record.get("by_whom", ""),
             "@contact_date": existing_record.get("contact_date", ""),
             "@due_date": existing_record.get("due_date", ""),
