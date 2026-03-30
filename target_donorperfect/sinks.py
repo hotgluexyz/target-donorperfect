@@ -23,10 +23,10 @@ class DonorsSink(DonorPerfectSink):
             existing_record = self.parse_xml_response(response.text)
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
-        
-        if record.get("email_status") != existing_record.get("email_status"):
-            params["updated_email_status"] = record.get("email_status")
-            params["email_status_date"] = record.get("email_status_date")
+
+            if record.get("email_status") != existing_record.get("email_status"):
+                params["updated_email_status"] = record.get("email_status")
+                params["email_status_date"] = record.get("email_status_date")
 
         # fill empty values with existing values
         existing_record.update(record)
@@ -86,8 +86,10 @@ class DonorsSink(DonorPerfectSink):
         response = self.request_api(method, params=record)
         res_json = self.parse_xml_response(response.text)
         
-        if updated_email_status:
-            update_query = f"UPDATE DPADDRESS SET email_status='{updated_email_status}', email_status_date='{email_status_date}' WHERE donor_id='{donor_id}'"
+        if updated_email_status is not None:
+            safe_status = self.escape_single_quotes(updated_email_status)
+            safe_date = self.escape_single_quotes(email_status_date)
+            update_query = f"UPDATE DPADDRESS SET email_status='{safe_status}', email_status_date='{safe_date}' WHERE donor_id='{donor_id}'"
             self.request_api("GET", params={"action": update_query})
 
         if donor_id:
