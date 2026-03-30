@@ -25,8 +25,8 @@ class DonorsSink(DonorPerfectSink):
             params["donor_id"] = existing_record.get("donor_id", 0)
 
             if record.get("email_status") != existing_record.get("email_status"):
-                params["updated_email_status"] = record.get("email_status")
-                params["email_status_date"] = record.get("email_status_date")
+                params["updated_email_status"] = record.get("email_status") or ""
+                params["email_status_date"] = record.get("email_status_date") or ""
 
         # fill empty values with existing values
         existing_record.update(record)
