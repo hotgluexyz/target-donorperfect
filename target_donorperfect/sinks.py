@@ -56,6 +56,8 @@ class DonorsSink(DonorPerfectSink):
                 "@donor_type": existing_record.get("donor_type", ""),
                 "@nomail": existing_record.get("nomail", ""),
                 "@nomail_reason": existing_record.get("nomail_reason", ""),
+                "@email_status": existing_record.get("email_status", ""),
+                "@email_status_date": existing_record.get("email_status_date", ""),
                 "@narrative": existing_record.get("narrative", ""),
                 "@donor_rcpt_type": existing_record.get("donor_rcpt_type", ""),
                 "@user_id": existing_record.get("user_id", ""),
