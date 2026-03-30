@@ -24,6 +24,10 @@ class DonorsSink(DonorPerfectSink):
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
 
+            if record.get("email_status") != existing_record.get("email_status"):
+                params["updated_email_status"] = record.get("email_status") or ""
+                params["email_status_date"] = record.get("email_status_date") or ""
+
         # fill empty values with existing values
         existing_record.update(record)
         # process data
@@ -56,6 +60,8 @@ class DonorsSink(DonorPerfectSink):
                 "@donor_type": existing_record.get("donor_type", ""),
                 "@nomail": existing_record.get("nomail", ""),
                 "@nomail_reason": existing_record.get("nomail_reason", ""),
+                "@email_status": existing_record.get("email_status", ""),
+                "@email_status_date": existing_record.get("email_status_date", ""),
                 "@narrative": existing_record.get("narrative", ""),
                 "@donor_rcpt_type": existing_record.get("donor_rcpt_type", ""),
                 "@user_id": existing_record.get("user_id", ""),
@@ -73,9 +79,19 @@ class DonorsSink(DonorPerfectSink):
 
         # get donor_id for updates
         donor_id = record.pop("donor_id", None)
+        updated_email_status = record.pop("updated_email_status", None)
+        email_status_date = record.pop("email_status_date", None)
+
         # send request
         response = self.request_api(method, params=record)
         res_json = self.parse_xml_response(response.text)
+        
+        if updated_email_status is not None:
+            safe_status = self.escape_single_quotes(updated_email_status)
+            safe_date = self.escape_single_quotes(email_status_date)
+            update_query = f"UPDATE DPADDRESS SET email_status='{safe_status}', email_status_date='{safe_date}' WHERE donor_id='{donor_id}'"
+            self.request_api("GET", params={"action": update_query})
+
         if donor_id:
             state_updates['is_updated'] = True
             return donor_id, True, state_updates
