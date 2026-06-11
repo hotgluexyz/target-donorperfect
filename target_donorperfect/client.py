@@ -21,9 +21,9 @@ class DonorPerfectSink(HotglueSink):
         """Request records from REST endpoint(s), returning response records."""
         # add authentication
         params["apikey"] = unquote(self.config.get("api_token"))
-        # send request
-        resp = self._request(http_method, endpoint, params, request_data, headers, verify=verify)
-        return resp
+        return super().request_api(
+            http_method, endpoint, params=params, request_data=request_data, headers=headers, verify=verify
+        )
 
     
     # Escape single quotes in string values to avoid breaking the params format
