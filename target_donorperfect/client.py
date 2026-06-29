@@ -10,8 +10,16 @@ class DonorPerfectSink(HotglueSink):
 
     def parse_xml_response(self, response: str) -> dict:
         """Parse the XML response."""
-        res_json = xmltodict.parse(response).get("result", {}).get("record")
-        fields = res_json.get("field", [])
+        res_json = xmltodict.parse(response).get("result") or {}
+        result = res_json.get("record")
+        error = res_json.get("error")
+
+        if error:
+            raise Exception(f"Error in response: {error}. Response: {res_json}")
+      
+        if not result:
+            return {}
+        fields = result.get("field", [])
         if isinstance(fields, list):
             return {field["@name"]: field["@value"] for field in fields}
         else:
