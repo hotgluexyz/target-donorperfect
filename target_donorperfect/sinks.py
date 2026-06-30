@@ -22,7 +22,7 @@ class DonorsSink(DonorPerfectSink):
             response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
-                self.logger.info(f"No existing record found for donor_id: {record['donor_id']}")
+                raise Exception(f"Not able to update donor record, no existing record found for donor_id: {record['donor_id']}")
 
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
