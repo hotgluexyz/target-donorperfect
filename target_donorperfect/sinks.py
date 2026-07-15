@@ -2,6 +2,7 @@
 
 
 from target_donorperfect.client import DonorPerfectSink
+from hotglue_etl_exceptions import InvalidPayloadError
 from urllib.parse import unquote
 
 
@@ -22,7 +23,7 @@ class DonorsSink(DonorPerfectSink):
             response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
-                raise Exception(f"Not able to update donor record, no existing record found for donor_id: {record['donor_id']}")
+                raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {record['donor_id']}")
 
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
@@ -99,7 +100,8 @@ class DonorsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return donor_id, True, state_updates
 
-        id = res_json.get("", None)
+        # dp_savedonor returns the new id as <field name='donor_id' value='...'/>
+        id = res_json.get("donor_id", None)
         return id, True, state_updates
 
 
@@ -163,5 +165,6 @@ class ContactsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return contact_id, True, state_updates
 
-        id = res_json.get("", None)
+        # dp_savecontact returns the new id as <field name='contact_id' value='...'/>
+        id = res_json.get("contact_id", None)
         return id, True, state_updates
