@@ -22,7 +22,7 @@ class DonorsSink(DonorPerfectSink):
         if record.get("donor_id", None):
             response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
-            if not existing_record.get("donor_id"):
+            if not existing_record:
                 raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {record['donor_id']}")
 
             # add donor_id to existing record for state, updates always return donor_id 0
@@ -117,9 +117,8 @@ class ContactsSink(DonorPerfectSink):
         if record.get("contact_id", None):
             response = self.request_api("GET", params={"action": f"select * FROM dpcontact WHERE contact_id='{record['contact_id']}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
-            if not existing_record.get("contact_id"):
+            if not existing_record:
                 self.logger.info(f"No existing record found for contact_id: {record['contact_id']}")
-                existing_record = {}
             # add contact_id to existing record for state, updates always return contact_id 0
             params["contact_id"] = existing_record.get("contact_id", 0)
 
@@ -165,5 +164,5 @@ class ContactsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return contact_id, True, state_updates
 
-        id = res_json.get("", None) or res_json.get("new_id", None)
+        id = res_json.get("", None)
         return id, True, state_updates

@@ -4,7 +4,6 @@ from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from urllib.parse import unquote
 import xmltodict
 
-# error texts observed from the DonorPerfect API
 CREDENTIALS_ERROR_PATTERNS = ("invalid token", "login failed")
 PAYLOAD_ERROR_PATTERNS = ("sql statement not allowed",)
 
@@ -47,14 +46,17 @@ class DonorPerfectSink(HotglueSink):
                 self.raise_classified_error("; ".join(reasons) or "unknown error", res_json)
 
     def parse_xml_response(self, response: str) -> dict:
-        """Parse an XML response into a dict of field name/value pairs."""
+        """Parse the XML response."""
         res_json = xmltodict.parse(response).get("result") or {}
-        record = res_json.get("record")
+        result = res_json.get("record")
 
-        fields = (record or res_json).get("field") or []
-        if not isinstance(fields, list):
-            fields = [fields]
-        return {field["@name"]: field.get("@value") for field in fields}
+        if not result:
+            return {}
+        fields = result.get("field", [])
+        if isinstance(fields, list):
+            return {field["@name"]: field["@value"] for field in fields}
+        else:
+            return {fields["@name"]: fields["@value"]}
 
     def request_api(self, http_method, endpoint=None, params={}, request_data=None, headers={}, verify=True):
         """Request records from REST endpoint(s), returning response records."""
