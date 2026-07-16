@@ -164,5 +164,7 @@ class ContactsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return contact_id, True, state_updates
 
-        id = res_json.get("new_id", None)
+        # dp_savecontact creates return the new id under an empty field name
+        # (<field name='' value='2713'/>); update-style saves return new_id=0
+        id = res_json.get("", None) or res_json.get("new_id", None)
         return id, True, state_updates
