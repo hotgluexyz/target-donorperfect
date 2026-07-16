@@ -100,8 +100,7 @@ class DonorsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return donor_id, True, state_updates
 
-        # dp_savedonor returns the new id as <field name='donor_id' value='...'/>
-        id = res_json.get("donor_id", None)
+        id = res_json.get("", None)
         return id, True, state_updates
 
 
@@ -165,6 +164,5 @@ class ContactsSink(DonorPerfectSink):
             state_updates['is_updated'] = True
             return contact_id, True, state_updates
 
-        # dp_savecontact returns the new id as <field name='contact_id' value='...'/>
-        id = res_json.get("contact_id", None)
+        id = res_json.get("new_id", None)
         return id, True, state_updates

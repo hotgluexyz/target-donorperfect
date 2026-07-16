@@ -16,7 +16,8 @@ class TargetDonorPerfect(TargetHotglue):
         th.Property(
             "api_token",
             th.StringType,
-            description="The path to the target output file"
+            required=True,
+            description="The DonorPerfect API key"
         )
     ).to_dict()
 
