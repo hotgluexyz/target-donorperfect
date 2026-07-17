@@ -137,3 +137,4 @@ dmypy.json
 .vscode/
 # local test data
 data.singer
+target-state.json
