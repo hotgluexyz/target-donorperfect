@@ -32,6 +32,9 @@ class DonorPerfectSink(HotglueSink):
         except Exception:
             return
 
+        if not isinstance(res_json, dict):
+            return
+
         error = res_json.get("error")
         if error:
             self.raise_classified_error(str(error), res_json)
