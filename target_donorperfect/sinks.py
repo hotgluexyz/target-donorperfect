@@ -119,8 +119,11 @@ class ContactsSink(DonorPerfectSink):
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
                 self.logger.info(f"No existing record found for contact_id: {record['contact_id']}")
-            # add contact_id to existing record for state, updates always return contact_id 0
-            params["contact_id"] = existing_record.get("contact_id", 0)
+                # no record to update; drop the non-existent id so a new contact is created
+                record.pop("contact_id", None)
+            else:
+                # add contact_id to existing record for state, updates always return contact_id 0
+                params["contact_id"] = existing_record.get("contact_id", 0)
 
         # fill empty values with existing values
         existing_record.update(record)
