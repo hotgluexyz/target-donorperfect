@@ -135,6 +135,3 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .vscode/
-# local test data
-data.singer
-target-state.json
