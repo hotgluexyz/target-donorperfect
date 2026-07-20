@@ -4,8 +4,9 @@ from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from urllib.parse import unquote
 import xmltodict
 
-CREDENTIALS_ERROR_PATTERNS = ("invalid token", "login failed")
-PAYLOAD_ERROR_PATTERNS = ("sql statement not allowed",)
+# exact error messages observed from the DonorPerfect API
+CREDENTIALS_ERROR_MESSAGES = ("invalid token.", "login failed", "user not authorized for this api call.")
+PAYLOAD_ERROR_MESSAGES = ("sql statement not allowed",)
 
 class DonorPerfectSink(HotglueSink):
     """DonorPerfect target sink class."""
@@ -16,10 +17,10 @@ class DonorPerfectSink(HotglueSink):
     def raise_classified_error(self, error_text: str, res_json: dict) -> None:
         """Raise the error class matching the API error message."""
         msg = f"Error in response: {error_text}. Response: {res_json}"
-        lowered = error_text.lower()
-        if any(pattern in lowered for pattern in CREDENTIALS_ERROR_PATTERNS):
+        lowered = error_text.strip().lower()
+        if lowered in CREDENTIALS_ERROR_MESSAGES:
             raise InvalidCredentialsError(msg)
-        if any(pattern in lowered for pattern in PAYLOAD_ERROR_PATTERNS):
+        if lowered in PAYLOAD_ERROR_MESSAGES:
             raise InvalidPayloadError(msg)
         raise FatalAPIError(msg)
 
