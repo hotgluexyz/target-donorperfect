@@ -1,0 +1,4 @@
+{"type": "SCHEMA", "stream": "donors", "schema": {"type": ["object", "null"], "properties": {"donor_id": {"type": ["string", "null"]}, "email": {"type": ["string", "null"]}, "email_status": {"type": ["string", "null"]}, "email_status_date": {"type": ["string", "null"]}, "externalId": {"type": ["string", "null"]}}}, "key_properties": []}
+{"type": "RECORD", "stream": "donors", "record": {"donor_id": "475", "email": "claudetest@example.com", "email_status": "Do Not Mail", "email_status_date": "2026-07-16", "externalId": "984b899f97efafff7d4462e2a91f45d1"}}
+{"type": "RECORD", "stream": "donors", "record": {"donor_id": "476", "email": "ada.lovelace@example.com", "email_status": "Active", "email_status_date": "2026-07-16", "externalId": "645ce3f48ad7823513a5289f0c261819"}}
+{"type": "STATE", "value": {}}
