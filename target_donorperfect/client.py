@@ -75,3 +75,16 @@ class DonorPerfectSink(HotglueSink):
         if isinstance(value, str):
             return value.replace("'", "''")
         return value
+
+    def format_procedure_params(self, fields: dict) -> str:
+        """Format stored-procedure params, quoting strings and using unquoted nulls."""
+        parts = []
+        for key, value in fields.items():
+            value = self.escape_single_quotes(value)
+            if value is None or value == "":
+                parts.append(f"{key}=null")
+            elif isinstance(value, str):
+                parts.append(f"{key}='{value}'")
+            else:
+                parts.append(f"{key}={value}")
+        return ",".join(parts)

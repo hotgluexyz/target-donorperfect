@@ -1,9 +1,12 @@
 """DonorPerfect target sink class, which handles writing streams."""
 
 
-from target_donorperfect.client import DonorPerfectSink
-from hotglue_etl_exceptions import InvalidPayloadError
+from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
+
+from hotglue_etl_exceptions import InvalidPayloadError
+
+from target_donorperfect.client import DonorPerfectSink
 
 
 class DonorsSink(DonorPerfectSink):
@@ -166,3 +169,104 @@ class ContactsSink(DonorPerfectSink):
 
         id = res_json.get("", None)
         return id, True, state_updates
+
+
+class GiftsSink(DonorPerfectSink):
+    """DonorPerfect gifts sink."""
+
+    name = "gifts"
+    relation_fields = [
+        {"field": "donor_id", "objectName": "donors"},
+    ]
+
+    def _coerce_number(self, value, default=None):
+        if value is None or value == "":
+            return default
+        if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+            return value
+        try:
+            if isinstance(value, str) and "." in value:
+                return Decimal(value)
+            return int(value)
+        except (TypeError, ValueError, InvalidOperation):
+            return value
+
+    def _format_gift_date(self, value):
+        if not value or not isinstance(value, str):
+            return value or None
+        if len(value) >= 10 and value[4] == "-" and value[7] == "-":
+            year, month, day = value[:10].split("-")
+            return f"{month}/{day}/{year}"
+        return value
+
+    def _gift_fields(self, record: dict) -> dict:
+        return {
+            "@gift_id": self._coerce_number(record.get("gift_id"), default=0),
+            "@donor_id": self._coerce_number(record.get("donor_id")),
+            "@record_type": record.get("record_type") or "G",
+            "@gift_date": self._format_gift_date(record.get("gift_date")),
+            "@amount": self._coerce_number(record.get("amount")),
+            "@gl_code": record.get("gl_code"),
+            "@solicit_code": record.get("solicit_code"),
+            "@sub_solicit_code": record.get("sub_solicit_code"),
+            "@campaign": record.get("campaign"),
+            "@gift_type": record.get("gift_type"),
+            "@split_gift": record.get("split_gift") or "N",
+            "@pledge_payment": record.get("pledge_payment") or "N",
+            "@reference": record.get("reference"),
+            "@transaction_id": self._coerce_number(record.get("transaction_id")),
+            "@memory_honor": record.get("memory_honor"),
+            "@gfname": record.get("gfname"),
+            "@glname": record.get("glname"),
+            "@fmv": self._coerce_number(record.get("fmv")),
+            "@batch_no": self._coerce_number(record.get("batch_no"), default=0),
+            "@gift_narrative": record.get("gift_narrative"),
+            "@ty_letter_no": record.get("ty_letter_no"),
+            "@glink": self._coerce_number(record.get("glink")),
+            "@plink": self._coerce_number(record.get("plink")),
+            "@nocalc": record.get("nocalc") or "N",
+            "@receipt": record.get("receipt") or "Y",
+            "@old_amount": self._coerce_number(record.get("old_amount")),
+            "@user_id": record.get("user_id") or "Hotglue",
+        }
+
+    def preprocess_record(self, record: dict, context: dict) -> None:
+        """Process the record."""
+        params = {}
+        existing_record = {}
+
+        if record.get("gift_id"):
+            response = self.request_api(
+                "GET",
+                params={
+                    "action": f"select * FROM dpgift WHERE gift_id='{record['gift_id']}'",
+                    "apikey": unquote(self.config.get("api_token")),
+                },
+            )
+            existing_record = self.parse_xml_response(response.text)
+            if not existing_record:
+                raise InvalidPayloadError(
+                    f"Not able to update gift record, no existing record found for gift_id: {record['gift_id']}"
+                )
+            params["gift_id"] = existing_record.get("gift_id", 0)
+
+        existing_record.update(record)
+        params["action"] = "dp_savegift"
+        params["params"] = self.format_procedure_params(self._gift_fields(existing_record))
+        return params
+
+    def upsert_record(self, record: dict, context: dict) -> None:
+        """Upsert the record."""
+        method = "GET"
+        state_updates = dict()
+        gift_id = record.pop("gift_id", None)
+
+        response = self.request_api(method, params=record)
+        res_json = self.parse_xml_response(response.text)
+        if gift_id:
+            state_updates["is_updated"] = True
+            return gift_id, True, state_updates
+
+        id = res_json.get("", None)
+        return id, True, state_updates
+
