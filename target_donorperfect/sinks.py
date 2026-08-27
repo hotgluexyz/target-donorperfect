@@ -253,20 +253,32 @@ class GiftsSink(DonorPerfectSink):
         existing_record.update(record)
         params["action"] = "dp_savegift"
         params["params"] = self.format_procedure_params(self._gift_fields(existing_record))
+        if existing_record.get("class") not in (None, ""):
+            params["class"] = existing_record.get("class")
         return params
+
+    def _update_gift_class(self, gift_id, gift_class):
+        if not gift_id or gift_class in (None, ""):
+            return
+        safe_class = self.escape_single_quotes(str(gift_class))
+        update_query = f"UPDATE dpgift SET class='{safe_class}' WHERE gift_id='{gift_id}'"
+        self.request_api("GET", params={"action": update_query})
 
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
         method = "GET"
         state_updates = dict()
         gift_id = record.pop("gift_id", None)
+        gift_class = record.pop("class", None)
 
         response = self.request_api(method, params=record)
         res_json = self.parse_xml_response(response.text)
+        created_id = res_json.get("", None)
+        self._update_gift_class(gift_id or created_id, gift_class)
+
         if gift_id:
             state_updates["is_updated"] = True
             return gift_id, True, state_updates
 
-        id = res_json.get("", None)
-        return id, True, state_updates
+        return created_id, True, state_updates
 
