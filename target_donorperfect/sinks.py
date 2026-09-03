@@ -72,8 +72,9 @@ class DonorsSink(DonorPerfectSink):
             }.items()
         }
 
-        params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
-
+        body = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
+        body = self.clean_body(body)
+        params["params"] = body
         return params
 
     def upsert_record(self, record: dict, context: dict) -> None:
@@ -148,7 +149,9 @@ class ContactsSink(DonorPerfectSink):
             "@contact_state": existing_record.get("contact_state", "")
             }.items()
         }
-        params["params"] = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
+        body = ",".join([f"{k}={v}" if not isinstance(v, str) else f"{k}='{v}'" for k, v in fields.items()])
+        body = self.clean_body(body)
+        params["params"] = body
 
         return params
 
