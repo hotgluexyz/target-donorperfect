@@ -81,7 +81,7 @@ class DonorPerfectSink(HotglueSink):
     def clean_body(self, body: str) -> str:
         """Clean the body, replace  empty strings as null"""
         # Replace any field assignment of the form ='' (empty string) with =null
-        body = re.sub(r"=\s*'\s*'", "=null", body)
+        body = re.sub(r"=\s*'\s*'(?=,|$)", "=null", body)
         return body
  
      
