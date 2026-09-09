@@ -6,6 +6,7 @@ from hotglue_singer_sdk.target_sdk.target import TargetHotglue
 from target_donorperfect.sinks import (
     DonorsSink,
     ContactsSink,
+    GiftsSink,
 )
 
 
@@ -26,6 +27,7 @@ class TargetDonorPerfect(TargetHotglue):
     SINK_TYPES = [
         DonorsSink,
         ContactsSink,
+        GiftsSink,
     ]
 
 

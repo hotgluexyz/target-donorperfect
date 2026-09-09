@@ -8,6 +8,7 @@ This target allows you to sync data to DonorPerfect via their XML API. It curren
 
 - **Donors** - Create and update donor records
 - **Contacts** - Create and update contact records
+- **Gifts** - Create and update gift records
 
 ## Installation
 
