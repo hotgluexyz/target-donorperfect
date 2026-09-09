@@ -3,6 +3,7 @@ from hotglue_singer_sdk.exceptions import FatalAPIError
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from urllib.parse import unquote
 import xmltodict
+import re
 
 CREDENTIALS_ERROR_MESSAGES = ("invalid token.", "login failed", "user not authorized for this api call.")
 PAYLOAD_ERROR_MESSAGES = ("sql statement not allowed",)
@@ -88,3 +89,10 @@ class DonorPerfectSink(HotglueSink):
             else:
                 parts.append(f"{key}={value}")
         return ",".join(parts)
+    
+
+    def clean_body(self, body: str) -> str:
+        """Clean the body, replace  empty strings as null"""
+        # Replace any field assignment of the form ='' (empty string) with =null
+        body = re.sub(r"=\s*'\s*'(?=,|$)", "=null", body)
+        return body
