@@ -56,7 +56,8 @@ class DonorsSink(DonorPerfectSink):
                 "@city": existing_record.get("city", ""),
                 "@state": existing_record.get("state", ""),
                 "@zip": existing_record.get("zip", ""),
-                "@country": existing_record.get("country", ""),
+                # DonorPerfect's country column is varchar(30); longer values are rejected
+                "@country": (existing_record.get("country") or "")[:30],
                 "@address_type": existing_record.get("address_type", ""),
                 "@home_phone": existing_record.get("home_phone", ""),
                 "@business_phone": existing_record.get("business_phone", ""),
@@ -217,7 +218,6 @@ class GiftsSink(DonorPerfectSink):
             "@split_gift": record.get("split_gift") or "N",
             "@pledge_payment": record.get("pledge_payment") or "N",
             "@reference": record.get("reference"),
-            "@transaction_id": self._coerce_number(record.get("transaction_id")),
             "@memory_honor": record.get("memory_honor"),
             "@gfname": record.get("gfname"),
             "@glname": record.get("glname"),
@@ -231,7 +231,10 @@ class GiftsSink(DonorPerfectSink):
             "@receipt": record.get("receipt") or "Y",
             "@old_amount": self._coerce_number(record.get("old_amount")),
             "@user_id": record.get("user_id") or "Hotglue",
-            "@class": record.get("class"),
+            "@gift_aid_date": record.get("gift_aid_date"),
+            "@gift_aid_amt": self._coerce_number(record.get("gift_aid_amt")),
+            "@gift_aid_eligible_g": record.get("gift_aid_eligible_g"),
+            "@currency": record.get("currency"),
         }
 
     def preprocess_record(self, record: dict, context: dict) -> None:
