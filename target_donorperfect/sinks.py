@@ -19,14 +19,16 @@ class DonorsSink(DonorPerfectSink):
 
         params = {}
         params["action"] = "dp_savedonor"
+
+        donor_id = record.get("id", record.get("donor_id")) or 0
         
         existing_record = {}
         # if donor_id, get current values, if empty values are sent the record will be updated with empty values
-        if record.get("donor_id", None):
-            response = self.request_api("GET", params={"action": f"select *FROM dp WHERE donor_id='{record['donor_id']}'", "apikey": unquote(self.config.get("api_token"))})
+        if donor_id:
+            response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
-                raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {record['donor_id']}")
+                raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {donor_id}")
 
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
@@ -65,7 +67,7 @@ class DonorsSink(DonorPerfectSink):
                 "@email": existing_record.get("email", ""),
                 "@org_rec": existing_record.get("org_rec", ""),
                 "@donor_type": existing_record.get("donor_type", ""),
-                "@nomail": existing_record.get("nomail", ""),
+                "@nomail": existing_record.get("nomail", "") if donor_id else existing_record.get("nomail", "N"),
                 "@nomail_reason": existing_record.get("nomail_reason", ""),
                 "@email_status": existing_record.get("email_status", ""),
                 "@email_status_date": existing_record.get("email_status_date", ""),
@@ -117,12 +119,13 @@ class ContactsSink(DonorPerfectSink):
         """Process the record."""
         params = {}
         existing_record = {}
+        contact_id = record.get("id", record.get("contact_id")) or 0
 
-        if record.get("contact_id", None):
-            response = self.request_api("GET", params={"action": f"select * FROM dpcontact WHERE contact_id='{record['contact_id']}'", "apikey": unquote(self.config.get("api_token"))})
+        if contact_id:
+            response = self.request_api("GET", params={"action": f"select * FROM dpcontact WHERE contact_id='{contact_id}'", "apikey": unquote(self.config.get("api_token"))})
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
-                self.logger.info(f"No existing record found for contact_id: {record['contact_id']}")
+                self.logger.info(f"No existing record found for contact_id: {contact_id}")
             # add contact_id to existing record for state, updates always return contact_id 0
             params["contact_id"] = existing_record.get("contact_id", 0)
 
@@ -238,19 +241,20 @@ class GiftsSink(DonorPerfectSink):
         """Process the record."""
         params = {}
         existing_record = {}
+        gift_id = record.get("id", record.get("gift_id")) or 0
 
-        if record.get("gift_id"):
+        if gift_id:
             response = self.request_api(
                 "GET",
                 params={
-                    "action": f"select * FROM dpgift WHERE gift_id='{record['gift_id']}'",
+                    "action": f"select * FROM dpgift WHERE gift_id='{gift_id}'",
                     "apikey": unquote(self.config.get("api_token")),
                 },
             )
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
                 raise InvalidPayloadError(
-                    f"Not able to update gift record, no existing record found for gift_id: {record['gift_id']}"
+                    f"Not able to update gift record, no existing record found for gift_id: {gift_id}"
                 )
             params["gift_id"] = existing_record.get("gift_id", 0)
 
