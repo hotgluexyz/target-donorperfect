@@ -218,6 +218,7 @@ class GiftsSink(DonorPerfectSink):
             "@split_gift": record.get("split_gift") or "N",
             "@pledge_payment": record.get("pledge_payment") or "N",
             "@reference": record.get("reference"),
+            "@transaction_id": self._coerce_number(record.get("transaction_id")),
             "@memory_honor": record.get("memory_honor"),
             "@gfname": record.get("gfname"),
             "@glname": record.get("glname"),
