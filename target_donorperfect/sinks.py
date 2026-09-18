@@ -1,6 +1,7 @@
 """DonorPerfect target sink class, which handles writing streams."""
 
 
+import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
 
@@ -21,7 +22,13 @@ class DonorsSink(DonorPerfectSink):
         params["action"] = "dp_savedonor"
 
         donor_id = record.get("id", record.get("donor_id")) or 0
-        
+
+        # no id (e.g. no snapshot yet): try to match an existing donor to avoid creating duplicates
+        matched_by_lookup = False
+        if not donor_id:
+            donor_id = self.find_existing_donor_id(record) or 0
+            matched_by_lookup = bool(donor_id)
+
         existing_record = {}
         # if donor_id, get current values, if empty values are sent the record will be updated with empty values
         if donor_id:
@@ -33,12 +40,17 @@ class DonorsSink(DonorPerfectSink):
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
 
-            if record.get("email_status") != existing_record.get("email_status"):
+            email_status_sent = not matched_by_lookup or record.get("email_status")
+            if email_status_sent and record.get("email_status") != existing_record.get("email_status"):
                 params["updated_email_status"] = record.get("email_status") or ""
                 params["email_status_date"] = record.get("email_status_date") or ""
 
         # fill empty values with existing values
-        existing_record.update(record)
+        if matched_by_lookup:
+            # the source didn't target this donor explicitly, don't wipe existing data with empty values
+            existing_record.update({k: v for k, v in record.items() if v not in (None, "")})
+        else:
+            existing_record.update(record)
         # process data
         # process record fields
 
@@ -82,6 +94,85 @@ class DonorsSink(DonorPerfectSink):
         body = self.clean_body(body)
         params["params"] = body
         return params
+
+    @staticmethod
+    def _normalize_text(value) -> str:
+        return " ".join(str(value).split()).casefold() if value is not None else ""
+
+    @staticmethod
+    def _normalize_zip(value) -> str:
+        zip_code = re.sub(r"\s+", "", str(value)).casefold() if value is not None else ""
+        # compare US ZIP+4 values by their 5-digit ZIP
+        if re.fullmatch(r"\d{5}(-?\d{4})?", zip_code):
+            return zip_code[:5]
+        return zip_code
+
+    def _query_donors(self, where: str) -> list:
+        response = self.request_api(
+            "GET",
+            params={"action": f"SELECT donor_id, first_name, last_name, zip, email FROM dp WHERE {where}"},
+        )
+        return self.parse_xml_records(response.text)
+
+    def _narrow_candidates(self, record: dict, candidates: list) -> list:
+        """Narrow candidates by last name, then ZIP, then first name, skipping fields that don't help."""
+        for field, normalize in (
+            ("last_name", self._normalize_text),
+            ("zip", self._normalize_zip),
+            ("first_name", self._normalize_text),
+        ):
+            if len(candidates) <= 1:
+                break
+            value = normalize(record.get(field))
+            if not value:
+                continue
+            narrowed = [c for c in candidates if normalize(c.get(field)) == value]
+            if narrowed:
+                candidates = narrowed
+        return candidates
+
+    def _pick_candidate(self, candidates: list, match_description: str):
+        if not candidates:
+            return None
+        # DonorPerfect data can contain duplicates, prefer the oldest donor instead of creating another one
+        candidates = sorted(candidates, key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"))
+        donor_id = candidates[0].get("donor_id")
+        if len(candidates) > 1:
+            self.logger.warning(
+                f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Using oldest donor_id {donor_id}"
+            )
+        else:
+            self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
+        return donor_id
+
+    def find_existing_donor_id(self, record: dict):
+        """Find an existing donor matching on email, then last name, ZIP and first name."""
+        email = (record.get("email") or "").strip()
+        if email:
+            candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
+            if candidates:
+                return self._pick_candidate(self._narrow_candidates(record, candidates), f"email '{email}'")
+
+        # no email or no email match: fall back to last name + ZIP + first name, all required
+        last_name = self._normalize_text(record.get("last_name"))
+        first_name = self._normalize_text(record.get("first_name"))
+        zip_code = self._normalize_zip(record.get("zip"))
+        if not (last_name and first_name and zip_code):
+            return None
+
+        candidates = self._query_donors(
+            f"last_name='{self.escape_single_quotes(record['last_name'].strip())}'"
+            f" AND first_name='{self.escape_single_quotes(record['first_name'].strip())}'"
+        )
+        candidates = [
+            c for c in candidates
+            if self._normalize_text(c.get("last_name")) == last_name
+            and self._normalize_text(c.get("first_name")) == first_name
+            and self._normalize_zip(c.get("zip")) == zip_code
+            # a donor with a different email is a different person
+            and (not email or not c.get("email") or self._normalize_text(c.get("email")) == self._normalize_text(email))
+        ]
+        return self._pick_candidate(candidates, f"last name, ZIP and first name '{record.get('first_name')} {record.get('last_name')} {record.get('zip')}'")
 
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
