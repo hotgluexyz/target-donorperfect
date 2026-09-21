@@ -122,7 +122,13 @@ class DonorsSink(DonorPerfectSink):
         return self.parse_xml_records(response.text)
 
     def _narrow_candidates(self, record: dict, candidates: list) -> list:
-        """Narrow donors sharing an email down to the one the record most likely refers to."""
+        """Disambiguate donors that share an email, one field at a time.
+
+        Extra fields are only applied while more than one donor still matches:
+        last name, then ZIP, then first name. A single remaining donor is a match.
+        If the incoming record is missing the next field, or that field matches
+        none of the remaining donors, the record cannot be resolved.
+        """
         for field, normalize in (
             ("last_name", self._normalize_text),
             ("zip", self._normalize_zip),
@@ -132,37 +138,61 @@ class DonorsSink(DonorPerfectSink):
                 break
             value = normalize(record.get(field))
             if not value:
-                continue
+                self.logger.info(
+                    f"{len(candidates)} donors share an email and the incoming record has no {field}. Creating a new donor"
+                )
+                return []
             narrowed = [c for c in candidates if normalize(c.get(field)) == value]
-            if narrowed:
-                candidates = narrowed
+            if not narrowed:
+                self.logger.info(
+                    f"No donor matched {field} among {len(candidates)} donors sharing an email. Creating a new donor"
+                )
+                return []
+            candidates = narrowed
         return candidates
 
     def _pick_candidate(self, candidates: list, match_description: str):
-        """Choose the donor to update from the remaining candidates, or None if there are none."""
-        if not candidates:
+        """Return the donor id when exactly one candidate remains.
+
+        Zero candidates, or more than one after every de-duplication step, means
+        the incoming record cannot be resolved and a new donor should be created.
+        """
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                self.logger.warning(
+                    f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Creating a new donor"
+                )
             return None
-        candidates = sorted(candidates, key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"))
         donor_id = candidates[0].get("donor_id")
-        if len(candidates) > 1:
-            self.logger.warning(
-                f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Using oldest donor_id {donor_id}"
-            )
-        else:
-            self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
+        self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
         return donor_id
 
     def find_existing_donor_id(self, record: dict):
-        """Find the existing DonorPerfect donor a source record refers to, if any. 
-        Used when a record has no donor id (e.g. before snapshots are populated) to avoid
-        creating duplicate donors."""
+        """Find the existing DonorPerfect donor a source record refers to, if any.
+
+        Used when a record has no donor id (for example before snapshots are populated)
+        so the same person is updated instead of duplicated.
+
+        Donors with an email are matched in order, stopping as soon as one donor remains:
+        email, then email + last name, then email + last name + ZIP, then those three
+        plus first name. Each later field is only used to separate multiple matches
+        from the previous step. If that chain cannot settle on one donor, no id is
+        returned and the record is created.
+
+        Records with no email, or an email that matches nobody, fall back to last name
+        + ZIP + first name together. Several donors matching that fallback are left
+        unresolved so a new donor is created.
+        """
         email = (record.get("email") or "").strip()
         if email:
             candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
             if candidates:
-                return self._pick_candidate(self._narrow_candidates(record, candidates), f"email '{email}'")
+                return self._pick_candidate(
+                    self._narrow_candidates(record, candidates),
+                    f"email '{email}'",
+                )
 
-        # no email or no email match: fall back to last name + ZIP + first name, all required
+        # no email, or an email that matches nobody: require last name + ZIP + first name
         last_name = self._normalize_text(record.get("last_name"))
         first_name = self._normalize_text(record.get("first_name"))
         zip_code = self._normalize_zip(record.get("zip"))
