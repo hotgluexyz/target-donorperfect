@@ -152,19 +152,25 @@ class DonorsSink(DonorPerfectSink):
         return candidates
 
     def _pick_candidate(self, candidates: list, match_description: str):
-        """Return the donor id when exactly one candidate remains.
+        """Return the donor id to update, or None when matching should create a new donor.
 
-        Zero candidates, or more than one after every de-duplication step, means
-        the incoming record cannot be resolved and a new donor should be created.
+        Exactly one candidate is a match. Zero candidates means the hierarchy could not
+        resolve the record (for example a missing or non-matching tie-breaker). More than
+        one candidate after every field has been applied means update the oldest donor.
         """
-        if len(candidates) != 1:
-            if len(candidates) > 1:
-                self.logger.warning(
-                    f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Creating a new donor"
-                )
+        if not candidates:
             return None
+        candidates = sorted(
+            candidates,
+            key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"),
+        )
         donor_id = candidates[0].get("donor_id")
-        self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
+        if len(candidates) > 1:
+            self.logger.warning(
+                f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Using oldest donor_id {donor_id}"
+            )
+        else:
+            self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
         return donor_id
 
     def find_existing_donor_id(self, record: dict):
@@ -175,9 +181,10 @@ class DonorsSink(DonorPerfectSink):
 
         Matching starts with email and stops as soon as one donor remains. While more
         than one donor shares the fields matched so far, the next field is added:
-        last name, then ZIP, then first name. A missing tie-breaker, a tie-breaker
-        that matches nobody, or more than one donor after first name means the
-        record cannot be resolved and a new donor is created.
+        last name, then ZIP, then first name. A missing tie-breaker or a tie-breaker
+        that matches nobody means the record cannot be resolved and a new donor is
+        created. If all four fields still leave more than one donor, the oldest is
+        updated.
 
         A record with no email, or an email that matches nobody, is created rather
         than matched on name and ZIP.
