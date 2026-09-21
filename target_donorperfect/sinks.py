@@ -375,10 +375,13 @@ class GiftsSink(DonorPerfectSink):
             )
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
-                raise InvalidPayloadError(
-                    f"Not able to update gift record, no existing record found for gift_id: {gift_id}"
+                # Snapshot may still reference a gift deleted in DP; recreate instead of failing
+                self.logger.info(
+                    f"No existing record found for gift_id: {gift_id}. Creating a new gift"
                 )
-            params["gift_id"] = existing_record.get("gift_id", 0)
+                record["gift_id"] = 0
+            else:
+                params["gift_id"] = existing_record.get("gift_id", 0)
 
         existing_record.update(record)
         params["action"] = "dp_savegift"
