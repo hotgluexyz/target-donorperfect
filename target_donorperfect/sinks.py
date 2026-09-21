@@ -173,45 +173,26 @@ class DonorsSink(DonorPerfectSink):
         Used when a record has no donor id (for example before snapshots are populated)
         so the same person is updated instead of duplicated.
 
-        Donors with an email are matched in order, stopping as soon as one donor remains:
-        email, then email + last name, then email + last name + ZIP, then those three
-        plus first name. Each later field is only used to separate multiple matches
-        from the previous step. If that chain cannot settle on one donor, no id is
-        returned and the record is created.
+        Matching starts with email and stops as soon as one donor remains. While more
+        than one donor shares the fields matched so far, the next field is added:
+        last name, then ZIP, then first name. A missing tie-breaker, a tie-breaker
+        that matches nobody, or more than one donor after first name means the
+        record cannot be resolved and a new donor is created.
 
-        Records with no email, or an email that matches nobody, fall back to last name
-        + ZIP + first name together. Several donors matching that fallback are left
-        unresolved so a new donor is created.
+        A record with no email, or an email that matches nobody, is created rather
+        than matched on name and ZIP.
         """
         email = (record.get("email") or "").strip()
-        if email:
-            candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
-            if candidates:
-                return self._pick_candidate(
-                    self._narrow_candidates(record, candidates),
-                    f"email '{email}'",
-                )
-
-        # no email, or an email that matches nobody: require last name + ZIP + first name
-        last_name = self._normalize_text(record.get("last_name"))
-        first_name = self._normalize_text(record.get("first_name"))
-        zip_code = self._normalize_zip(record.get("zip"))
-        if not (last_name and first_name and zip_code):
+        if not email:
             return None
 
-        candidates = self._query_donors(
-            f"last_name='{self.escape_single_quotes(record['last_name'].strip())}'"
-            f" AND first_name='{self.escape_single_quotes(record['first_name'].strip())}'"
+        candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
+        if not candidates:
+            return None
+        return self._pick_candidate(
+            self._narrow_candidates(record, candidates),
+            f"email '{email}'",
         )
-        candidates = [
-            c for c in candidates
-            if self._normalize_text(c.get("last_name")) == last_name
-            and self._normalize_text(c.get("first_name")) == first_name
-            and self._normalize_zip(c.get("zip")) == zip_code
-            # a donor with a different email is a different person
-            and (not email or not c.get("email") or self._normalize_text(c.get("email")) == self._normalize_text(email))
-        ]
-        return self._pick_candidate(candidates, f"last name, ZIP and first name '{record.get('first_name')} {record.get('last_name')} {record.get('zip')}'")
 
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
