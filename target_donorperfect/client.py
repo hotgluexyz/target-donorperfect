@@ -63,7 +63,12 @@ class DonorPerfectSink(HotglueSink):
             return {fields["@name"]: fields["@value"]}
 
     def parse_xml_records(self, response: str) -> list:
-        """Parse every record in the XML response."""
+        """Parse every record in the XML response into a list of {field name: value} dicts.
+
+        Unlike parse_xml_response, which returns only the first record, this is used where a
+        query can legitimately return several rows, e.g. donor matching, where multiple donors
+        can share an email. Returns an empty list when nothing matched.
+        """
         res_json = xmltodict.parse(response).get("result") or {}
         records = res_json.get("record") or []
         if not isinstance(records, list):

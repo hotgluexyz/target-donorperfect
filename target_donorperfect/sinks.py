@@ -16,7 +16,18 @@ class DonorsSink(DonorPerfectSink):
     name = "donors"
 
     def preprocess_record(self, record: dict, context: dict) -> None:
-        """Process the record."""
+        """Build the dp_savedonor request for a donor, deciding whether to update or create.
+
+        A record carrying an id/donor_id (e.g. resolved from the snapshot) updates that donor.
+        Without one, we first try to match an existing DonorPerfect donor (see
+        find_existing_donor_id) so that syncs running before snapshots are populated, like the
+        first Cvent import, update existing donors instead of creating duplicates. Only when no
+        match is found is a new donor created.
+
+        Donors found by matching are updated conservatively: empty source values are ignored so
+        they don't wipe data already in DonorPerfect, and email_status is only changed when the
+        source actually sends one.
+        """
 
         params = {}
         params["action"] = "dp_savedonor"
@@ -97,10 +108,20 @@ class DonorsSink(DonorPerfectSink):
 
     @staticmethod
     def _normalize_text(value) -> str:
+        """Normalize a name or email for matching: case-insensitive, extra whitespace ignored.
+
+        "JANE  Smith" and "jane smith" must be treated as the same value.
+        """
         return " ".join(str(value).split()).casefold() if value is not None else ""
 
     @staticmethod
     def _normalize_zip(value) -> str:
+        """Normalize a postal code for matching.
+
+        Whitespace and case are ignored, and US ZIP+4 values are reduced to their 5-digit ZIP
+        so "12345-6789", "123456789" and "12345" all match. Non-US postal codes are compared
+        in full.
+        """
         zip_code = re.sub(r"\s+", "", str(value)).casefold() if value is not None else ""
         # compare US ZIP+4 values by their 5-digit ZIP
         if re.fullmatch(r"\d{5}(-?\d{4})?", zip_code):
@@ -108,6 +129,7 @@ class DonorsSink(DonorPerfectSink):
         return zip_code
 
     def _query_donors(self, where: str) -> list:
+        """Return donors matching a SQL WHERE clause, with only the fields used for matching."""
         response = self.request_api(
             "GET",
             params={"action": f"SELECT donor_id, first_name, last_name, zip, email FROM dp WHERE {where}"},
@@ -115,7 +137,7 @@ class DonorsSink(DonorPerfectSink):
         return self.parse_xml_records(response.text)
 
     def _narrow_candidates(self, record: dict, candidates: list) -> list:
-        """Narrow candidates by last name, then ZIP, then first name, skipping fields that don't help."""
+        """Narrow donors sharing an email down to the one the record most likely refers to."""
         for field, normalize in (
             ("last_name", self._normalize_text),
             ("zip", self._normalize_zip),
@@ -132,9 +154,9 @@ class DonorsSink(DonorPerfectSink):
         return candidates
 
     def _pick_candidate(self, candidates: list, match_description: str):
+        """Choose the donor to update from the remaining candidates, or None if there are none."""
         if not candidates:
             return None
-        # DonorPerfect data can contain duplicates, prefer the oldest donor instead of creating another one
         candidates = sorted(candidates, key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"))
         donor_id = candidates[0].get("donor_id")
         if len(candidates) > 1:
@@ -146,7 +168,9 @@ class DonorsSink(DonorPerfectSink):
         return donor_id
 
     def find_existing_donor_id(self, record: dict):
-        """Find an existing donor matching on email, then last name, ZIP and first name."""
+        """Find the existing DonorPerfect donor a source record refers to, if any. 
+        Used when a record has no donor id (e.g. before snapshots are populated) to avoid
+        creating duplicate donors."""
         email = (record.get("email") or "").strip()
         if email:
             candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
