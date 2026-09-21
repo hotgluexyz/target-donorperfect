@@ -62,6 +62,21 @@ class DonorPerfectSink(HotglueSink):
         else:
             return {fields["@name"]: fields["@value"]}
 
+    def parse_xml_records(self, response: str) -> list:
+        """Parse every record in the XML response into a list of {field name: value} dicts."""
+        res_json = xmltodict.parse(response).get("result") or {}
+        records = res_json.get("record") or []
+        if not isinstance(records, list):
+            records = [records]
+
+        parsed = []
+        for record in records:
+            fields = record.get("field", [])
+            if not isinstance(fields, list):
+                fields = [fields]
+            parsed.append({field["@name"]: field["@value"] for field in fields})
+        return parsed
+
     def request_api(self, http_method, endpoint=None, params={}, request_data=None, headers={}, verify=True):
         """Request records from REST endpoint(s), returning response records."""
         # add authentication
