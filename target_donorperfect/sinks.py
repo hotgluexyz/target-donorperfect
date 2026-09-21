@@ -16,17 +16,10 @@ class DonorsSink(DonorPerfectSink):
     name = "donors"
 
     def preprocess_record(self, record: dict, context: dict) -> None:
-        """Build the dp_savedonor request for a donor, deciding whether to update or create.
-
-        A record carrying an id/donor_id (e.g. resolved from the snapshot) updates that donor.
-        Without one, we first try to match an existing DonorPerfect donor (see
-        find_existing_donor_id) so that syncs running before snapshots are populated, like the
-        first Cvent import, update existing donors instead of creating duplicates. Only when no
-        match is found is a new donor created.
-
-        Donors found by matching are updated conservatively: empty source values are ignored so
-        they don't wipe data already in DonorPerfect, and email_status is only changed when the
-        source actually sends one.
+        """Build the dp_savedonor request to create or update a donor.
+        Updates if a donor ID is present or matched via find_existing_donor_id();
+        otherwise creates a new donor. Matched updates preserve existing data by
+        ignoring empty fields and only updating email_status when explicitly provided.
         """
 
         params = {}
@@ -108,20 +101,12 @@ class DonorsSink(DonorPerfectSink):
 
     @staticmethod
     def _normalize_text(value) -> str:
-        """Normalize a name or email for matching: case-insensitive, extra whitespace ignored.
-
-        "JANE  Smith" and "jane smith" must be treated as the same value.
-        """
+        """Normalize a name or email for matching: case-insensitive, extra whitespace ignored."""
         return " ".join(str(value).split()).casefold() if value is not None else ""
 
     @staticmethod
     def _normalize_zip(value) -> str:
-        """Normalize a postal code for matching.
-
-        Whitespace and case are ignored, and US ZIP+4 values are reduced to their 5-digit ZIP
-        so "12345-6789", "123456789" and "12345" all match. Non-US postal codes are compared
-        in full.
-        """
+        """Normalize a postal code for matching."""
         zip_code = re.sub(r"\s+", "", str(value)).casefold() if value is not None else ""
         # compare US ZIP+4 values by their 5-digit ZIP
         if re.fullmatch(r"\d{5}(-?\d{4})?", zip_code):
