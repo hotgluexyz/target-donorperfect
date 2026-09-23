@@ -20,6 +20,7 @@ class DonorsSink(DonorPerfectSink):
         Updates if a donor ID is present or matched via find_existing_donor_id();
         otherwise creates a new donor. Matched updates preserve existing data by
         ignoring empty fields and only updating email_status when explicitly provided.
+        Skips the whole record when payload email does not match the donor's primary email.
         """
 
         params = {}
@@ -40,6 +41,13 @@ class DonorsSink(DonorPerfectSink):
             existing_record = self.parse_xml_response(response.text)
             if not existing_record:
                 raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {donor_id}")
+
+            # ETL read flow emits one row per email (primary or alternate); only apply the primary-email row
+            payload_email = record.get("email")
+            primary_email = existing_record.get("email")
+            if payload_email and primary_email and payload_email != primary_email:
+                self.logger.info(f"Skipping donor {donor_id}: email {payload_email!r} does not match primary {primary_email!r}")
+                return {"donor_id": existing_record.get("donor_id", donor_id), "_skip": True}
 
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
@@ -208,6 +216,9 @@ class DonorsSink(DonorPerfectSink):
 
         # get donor_id for updates
         donor_id = record.pop("donor_id", None)
+        if record.pop("_skip", None):
+            return donor_id, True, {"existing": True}
+
         updated_email_status = record.pop("updated_email_status", None)
         email_status_date = record.pop("email_status_date", None)
 
