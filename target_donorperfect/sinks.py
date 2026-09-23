@@ -24,7 +24,7 @@ class DonorsSink(DonorPerfectSink):
         if key not in cache:
             response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
             cache[key] = self.parse_xml_response(response.text)
-        return cache[key]
+        return cache[key].copy()
 
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Build the dp_savedonor request to create or update a donor.
