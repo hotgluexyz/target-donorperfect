@@ -126,7 +126,13 @@ def test_unknown_email_does_not_match_on_name_and_zip():
 def _preprocess_sink(existing):
     sink = DonorsSink.__new__(DonorsSink)
     sink.logger = logging.getLogger("donor-skip-test")
-    sink._get_existing_donor = lambda donor_id: dict(existing)
+    sink._config = {"api_token": "test"}
+
+    class _Resp:
+        text = ""
+
+    sink.request_api = lambda *a, **k: _Resp()
+    sink.parse_xml_response = lambda text: dict(existing)
     return sink
 
 

@@ -15,17 +15,6 @@ class DonorsSink(DonorPerfectSink):
 
     name = "donors"
 
-    def _get_existing_donor(self, donor_id) -> dict:
-        """GET donor by id, cached for the sink lifetime (multi-email payloads share a donor)."""        
-        cache = getattr(self, "_donor_cache", None)
-        if cache is None:
-            cache = self._donor_cache = {}
-        key = str(donor_id)
-        if key not in cache:
-            response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
-            cache[key] = self.parse_xml_response(response.text)
-        return cache[key].copy()
-
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Build the dp_savedonor request to create or update a donor.
         Updates if a donor ID is present or matched via find_existing_donor_id();
@@ -48,7 +37,8 @@ class DonorsSink(DonorPerfectSink):
         existing_record = {}
         # if donor_id, get current values, if empty values are sent the record will be updated with empty values
         if donor_id:
-            existing_record = self._get_existing_donor(donor_id)
+            response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
+            existing_record = self.parse_xml_response(response.text)
             if not existing_record:
                 raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {donor_id}")
 
