@@ -121,3 +121,46 @@ def test_unknown_email_does_not_match_on_name_and_zip():
         "last_name": "emailless",
         "zip": "77777",
     }) is None
+
+
+def _preprocess_sink(existing):
+    sink = DonorsSink.__new__(DonorsSink)
+    sink.logger = logging.getLogger("donor-skip-test")
+    sink._get_existing_donor = lambda donor_id: dict(existing)
+    return sink
+
+
+def test_non_primary_email_skips_whole_record():
+    sink = _preprocess_sink({"donor_id": "570", "email": "hgi-11239@hotglue.io", "email_status": "ACTIVE"})
+    out = sink.preprocess_record(
+        {"donor_id": "570", "email": "hgi-11239-alt1@hotglue.io", "email_status": "DONOTMAIL"},
+        {},
+    )
+    assert out == {"donor_id": "570", "_skip": True}
+
+
+def test_primary_email_is_not_skipped():
+    sink = _preprocess_sink({
+        "donor_id": "570",
+        "email": "hgi-11239@hotglue.io",
+        "email_status": "ACTIVE",
+        "first_name": "HGI",
+        "last_name": "11239",
+    })
+    out = sink.preprocess_record(
+        {"donor_id": "570", "email": "hgi-11239@hotglue.io", "email_status": "ACTIVE"},
+        {},
+    )
+    assert out.get("_skip") is not True
+    assert out.get("action") == "dp_savedonor"
+    assert "params" in out
+
+
+def test_skipped_upsert_does_not_hit_api():
+    sink = DonorsSink.__new__(DonorsSink)
+    sink.logger = logging.getLogger("donor-skip-test")
+    called = []
+    sink.request_api = lambda *a, **k: called.append((a, k))
+    id_, ok, state = sink.upsert_record({"donor_id": "570", "_skip": True}, {})
+    assert (id_, ok, state) == ("570", True, {"existing": True})
+    assert called == []
