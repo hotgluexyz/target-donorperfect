@@ -233,6 +233,9 @@ class ContactsSink(DonorPerfectSink):
     """DonorPerfect target sink class."""
 
     name = "dp_contacts"
+    relation_fields = [
+        {"field": "donor_id", "objectName": "donors"},
+    ]
 
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Process the record."""
