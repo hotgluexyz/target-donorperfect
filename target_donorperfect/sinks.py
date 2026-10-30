@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
 
 from hotglue_etl_exceptions import InvalidPayloadError
+from hotglue_singer_sdk.exceptions import FatalAPIError
 
 from target_donorperfect.client import DonorPerfectSink
 
@@ -474,6 +475,13 @@ class DonorFlagAssociationSink(DonorPerfectSink):
         if self._flag_already_set(donor_id, flag):
             return remote_id, True, {"existing": True}
 
-        self.request_api("GET", params=record)
+        response = self.request_api("GET", params=record)
+        # dp_saveflag_xml returns the donor_id in an unnamed field when the association is created.
+        confirmed_donor_id = str(self.parse_xml_response(response.text).get("") or "").strip()
+        if confirmed_donor_id != str(donor_id).strip():
+            raise FatalAPIError(
+                f"dp_saveflag_xml did not confirm flag association for "
+                f"donor_id={donor_id!r}, flag={flag!r}. Response: {response.text}"
+            )
         return remote_id, True, {}
 
