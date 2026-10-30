@@ -418,20 +418,22 @@ class GiftsSink(DonorPerfectSink):
         return id, True, state_updates
 
 
-class FlagsSink(DonorPerfectSink):
+class DonorFlagAssociationSink(DonorPerfectSink):
     """Associate an existing DonorPerfect FLAG code with a donor via dp_saveflag_xml.
 
     Does not create FLAG codes — only links a code from Code Maintenance onto a donor.
     Re-associating a flag that is already set is treated as success (idempotent).
     """
 
-    name = "flags"
+    name = "donor_flag_association"
     relation_fields = [
         {"field": "donor_id", "objectName": "donors"},
     ]
 
     def _flag_already_set(self, donor_id, flag: str) -> bool:
         """Return True when dpflags already has this donor_id + flag pair."""
+        if not str(donor_id).isdigit():
+            raise InvalidPayloadError(f"Invalid donor_id for flag check: {donor_id!r}")
         safe_flag = self.escape_single_quotes(flag)
         response = self.request_api(
             "GET",
