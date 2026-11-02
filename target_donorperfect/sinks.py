@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
 
 from hotglue_etl_exceptions import InvalidPayloadError
+from hotglue_singer_sdk.exceptions import FatalAPIError
 
 from target_donorperfect.client import DonorPerfectSink
 
@@ -416,4 +417,71 @@ class GiftsSink(DonorPerfectSink):
 
         id = res_json.get("", None)
         return id, True, state_updates
+
+
+class DonorFlagAssociationSink(DonorPerfectSink):
+    """Associate an existing DonorPerfect FLAG code with a donor via dp_saveflag_xml.
+
+    Does not create FLAG codes — only links a code from Code Maintenance onto a donor.
+    Re-associating a flag that is already set is treated as success (idempotent).
+    """
+
+    name = "donor_flag_association"
+    relation_fields = [
+        {"field": "donor_id", "objectName": "donors"},
+    ]
+
+    def _flag_already_set(self, donor_id, flag: str) -> bool:
+        """Return True when dpflags already has this donor_id + flag pair."""
+        if not str(donor_id).isdigit():
+            raise InvalidPayloadError(f"Invalid donor_id for flag check: {donor_id!r}")
+        safe_flag = self.escape_single_quotes(flag)
+        response = self.request_api(
+            "GET",
+            params={
+                "action": (
+                    f"SELECT donor_id, flag FROM dpflags "
+                    f"WHERE donor_id='{donor_id}' AND flag='{safe_flag}'"
+                ),
+            },
+        )
+        return bool(self.parse_xml_records(response.text))
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Build the dp_saveflag_xml request for a donor/flag association."""
+        donor_id = record.get("donor_id")
+        flag = record.get("flag")
+        return {
+            "action": "dp_saveflag_xml",
+            "params": self.format_procedure_params(
+                {
+                    "@donor_id": donor_id,
+                    "@flag": flag,
+                    "@user_id": record.get("user_id") or "Hotglue",
+                }
+            ),
+            # Carried into upsert_record for existence check but popped before the API call.
+            "donor_id": donor_id,
+            "flag": flag,
+        }
+
+    def upsert_record(self, record: dict, context: dict) -> None:
+        """Upsert the flag association; duplicates are reported as existing."""
+        donor_id = record.pop("donor_id", None)
+        flag = record.pop("flag", None)
+        remote_id = f"{donor_id}:{flag}"
+
+        # DP raises a PK violation when the flag is already set; treat as success instead.
+        if self._flag_already_set(donor_id, flag):
+            return remote_id, True, {"existing": True}
+
+        response = self.request_api("GET", params=record)
+        # dp_saveflag_xml returns the donor_id in an unnamed field when the association is created.
+        confirmed_donor_id = str(self.parse_xml_response(response.text).get("") or "").strip()
+        if confirmed_donor_id != str(donor_id).strip():
+            raise FatalAPIError(
+                f"dp_saveflag_xml did not confirm flag association for "
+                f"donor_id={donor_id!r}, flag={flag!r}. Response: {response.text}"
+            )
+        return remote_id, True, {}
 

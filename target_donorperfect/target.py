@@ -7,6 +7,7 @@ from target_donorperfect.sinks import (
     DonorsSink,
     ContactsSink,
     GiftsSink,
+    DonorFlagAssociationSink,
 )
 
 
@@ -28,6 +29,7 @@ class TargetDonorPerfect(TargetHotglue):
         DonorsSink,
         ContactsSink,
         GiftsSink,
+        DonorFlagAssociationSink,
     ]
 
 

@@ -30,8 +30,10 @@ class DonorPerfectSink(HotglueSink):
 
         try:
             res_json = xmltodict.parse(response.text).get("result") or {}
-        except Exception:
-            return
+        except Exception as exc:
+            raise FatalAPIError(
+                f"Failed to parse DonorPerfect XML response: {exc}. Response: {response.text}"
+            ) from exc
 
         if not isinstance(res_json, dict):
             return
