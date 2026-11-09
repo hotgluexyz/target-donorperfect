@@ -113,3 +113,106 @@ class DonorPerfectSink(HotglueSink):
         # Replace any field assignment of the form ='' (empty string) with =null
         body = re.sub(r"=\s*'\s*'(?=,|$)", "=null", body)
         return body
+
+    @staticmethod
+    def _normalize_text(value) -> str:
+        """Normalize a name or email for matching: case-insensitive, extra whitespace ignored."""
+        return " ".join(str(value).split()).casefold() if value is not None else ""
+
+    @staticmethod
+    def _normalize_zip(value) -> str:
+        """Normalize a postal code for matching."""
+        zip_code = re.sub(r"\s+", "", str(value)).casefold() if value is not None else ""
+        # compare US ZIP+4 values by their 5-digit ZIP
+        if re.fullmatch(r"\d{5}(-?\d{4})?", zip_code):
+            return zip_code[:5]
+        return zip_code
+
+    def _query_donors(self, where: str) -> list:
+        """Return donors matching a SQL WHERE clause, with only the fields used for matching."""
+        response = self.request_api(
+            "GET",
+            params={"action": f"SELECT donor_id, first_name, last_name, zip, email FROM dp WHERE {where}"},
+        )
+        return self.parse_xml_records(response.text)
+
+    def _narrow_candidates(self, record: dict, candidates: list) -> list:
+        """Disambiguate donors that share an email, one field at a time.
+
+        Extra fields are only applied while more than one donor still matches:
+        last name, then ZIP, then first name. A single remaining donor is a match.
+        If the incoming record is missing the next field, or that field matches
+        none of the remaining donors, the record cannot be resolved.
+        """
+        for field, normalize in (
+            ("last_name", self._normalize_text),
+            ("zip", self._normalize_zip),
+            ("first_name", self._normalize_text),
+        ):
+            if len(candidates) <= 1:
+                break
+            value = normalize(record.get(field))
+            if not value:
+                self.logger.info(
+                    f"{len(candidates)} donors share an email and the incoming record has no {field}. "
+                    "Cannot resolve donor"
+                )
+                return []
+            narrowed = [c for c in candidates if normalize(c.get(field)) == value]
+            if not narrowed:
+                self.logger.info(
+                    f"No donor matched {field} among {len(candidates)} donors sharing an email. "
+                    "Cannot resolve donor"
+                )
+                return []
+            candidates = narrowed
+        return candidates
+
+    def _pick_candidate(self, candidates: list, match_description: str):
+        """Return the matched donor id, or None when the hierarchy cannot resolve the record.
+
+        Exactly one candidate is a match. Zero candidates means the hierarchy could not
+        resolve the record (for example a missing or non-matching tie-breaker). More than
+        one candidate after every field has been applied means use the oldest donor.
+        """
+        if not candidates:
+            return None
+        candidates = sorted(
+            candidates,
+            key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"),
+        )
+        donor_id = candidates[0].get("donor_id")
+        if len(candidates) > 1:
+            self.logger.warning(
+                f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Using oldest donor_id {donor_id}"
+            )
+        else:
+            self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
+        return donor_id
+
+    def find_existing_donor_id(self, record: dict):
+        """Find the existing DonorPerfect donor a source record refers to, if any.
+
+        Used when a record has no donor id (for example before snapshots are populated)
+        so the same person is updated instead of duplicated.
+
+        Matching starts with email and stops as soon as one donor remains. While more
+        than one donor shares the fields matched so far, the next field is added:
+        last name, then ZIP, then first name. A missing tie-breaker or a tie-breaker
+        that matches nobody means the record cannot be resolved. If all four fields
+        still leave more than one donor, the oldest is returned.
+
+        A record with no email, or an email that matches nobody, returns None rather
+        than matching on name and ZIP alone.
+        """
+        email = (record.get("email") or "").strip()
+        if not email:
+            return None
+
+        candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
+        if not candidates:
+            return None
+        return self._pick_candidate(
+            self._narrow_candidates(record, candidates),
+            f"email '{email}'",
+        )
