@@ -15,13 +15,109 @@ class DonorsSink(DonorPerfectSink):
 
     name = "donors"
 
+    @staticmethod
+    def _format_udf_date(value):
+        """Convert ISO dates to DonorPerfect format MM/DD/YYYY"""
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            return value
+        if len(value) >= 10 and value[4] == "-" and value[7] == "-":
+            year, month, day = value[:10].split("-")
+            return f"{month}/{day}/{year}"
+        return value
+
+    def _load_udf_field_types(self, field_names: list) -> dict:
+        """Return {field_name: data_type} from sd_field for the given UDF names."""
+        if not field_names:
+            return {}
+        cache = getattr(self, "_udf_data_types_cache", {})
+        missing_fields = [name for name in field_names if name not in cache]
+        if missing_fields:
+            quoted_field_names = ",".join(f"'{self.escape_single_quotes(name)}'" for name in missing_fields)
+            response = self.request_api(
+                "GET",
+                params={
+                    "action": (
+                        f"SELECT field_name, data_type FROM sd_field "
+                        f"WHERE field_name IN ({quoted_field_names})"
+                    ),
+                },
+            )
+            for row in self.parse_xml_records(response.text):
+                name = row.get("field_name")
+                if name:
+                    cache[name] = (row.get("data_type") or "").strip().upper()
+            self._udf_data_types_cache = cache
+        return {name: cache[name] for name in field_names if name in cache}
+
+    def _udf_save_params(self, donor_id, field_name: str, data_type: str, value, user_id: str) -> dict:
+        """Build a single dp_save_udf_xml request body."""
+        fields = {
+            "@matching_id": donor_id,
+            "@field_name": field_name,
+            "@data_type": data_type,
+            "@char_value": None,
+            "@date_value": None,
+            "@number_value": None,
+            "@user_id": user_id,
+        }
+        if data_type == "C":
+            fields["@char_value"] = "" if value is None else str(value)
+        elif data_type == "D":
+            fields["@date_value"] = self._format_udf_date(value)
+        elif data_type == "N":
+            fields["@number_value"] = value
+        else:
+            raise InvalidPayloadError(
+                f"Unsupported UDF data_type {data_type!r} for field {field_name!r}"
+            )
+        return {
+            "action": "dp_save_udf_xml",
+            "params": self.format_procedure_params(fields),
+        }
+
+    def write_donor_udfs(self, donor_id, udfs: dict, user_id="Amilia"):
+        """Write each entry in udfs via dp_save_udf_xml using sd_field data types."""
+        if not udfs:
+            return
+        field_types = self._load_udf_field_types(list(udfs.keys()))
+        for field_name, value in udfs.items():
+            data_type = field_types.get(field_name)
+            if data_type is None:
+                raise InvalidPayloadError(
+                    f"UDF field {field_name!r} was not found in sd_field"
+                )
+            self.request_api(
+                "GET",
+                params=self._udf_save_params(donor_id, field_name, data_type, value, user_id),
+            )
+
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Build the dp_savedonor request to create or update a donor.
         Updates if a donor ID is present or matched via find_existing_donor_id();
         otherwise creates a new donor. Matched updates preserve existing data by
         ignoring empty fields and only updating email_status when explicitly provided.
         Skips the whole record when payload email does not match the donor's primary email.
+
+        When udfs are present, match only and don't create a new donor.
         """
+        udfs = record.pop("udfs", None)
+        if udfs is not None:
+            donor_id = self.find_existing_donor_id(record)
+            if not donor_id:
+                self.logger.info(
+                    f"Skipping unmatched donors UDF record "
+                    f"email={record.get('email')!r} "
+                    f"name={record.get('first_name')!r} {record.get('last_name')!r}"
+                )
+                return {"_skip": True}
+            return {
+                "donor_id": donor_id,
+                "udfs": udfs,
+                "user_id": 'Amilia',
+                "_udfs_only": True,
+            }
 
         params = {}
         params["action"] = "dp_savedonor"
@@ -116,6 +212,11 @@ class DonorsSink(DonorPerfectSink):
         donor_id = record.pop("donor_id", None)
         if record.pop("_skip", None):
             return donor_id, True, {"existing": True}
+
+        if record.pop("_udfs_only", None):
+            udfs = record.pop("udfs", {}) or {}
+            self.write_donor_udfs(donor_id, udfs, user_id="Amilia")
+            return donor_id, True, {"is_updated": True}
 
         updated_email_status = record.pop("updated_email_status", None)
         email_status_date = record.pop("email_status_date", None)
@@ -381,206 +482,4 @@ class DonorFlagAssociationSink(DonorPerfectSink):
                 f"donor_id={donor_id!r}, flag={flag!r}. Response: {response.text}"
             )
         return remote_id, True, {}
-
-
-class DonorMembershipsSink(DonorPerfectSink):
-    """Update membership UDFs on matched donors only via dp_save_udf_xml.
-
-    Never creates donors or calls dp_savedonor. Unmatched records are skipped.
-    """
-
-    name = "donor_memberships"
-
-    # ETL field -> expected DonorPerfect sd_field data_type
-    _UDF_SPECS = (
-        ("member_id", "C"),
-        ("membership_description", "C"),
-        ("membership_expiration_date", "D"),
-    )
-
-    @staticmethod
-    def _format_udf_date(value):
-        """Convert ISO dates to DP MM/DD/YYYY; pass through other non-empty values."""
-        if value is None or value == "":
-            return None
-        if not isinstance(value, str):
-            return value
-        if len(value) >= 10 and value[4] == "-" and value[7] == "-":
-            year, month, day = value[:10].split("-")
-            return f"{month}/{day}/{year}"
-        return value
-
-    def _membership_udf_config(self) -> dict:
-        """Return the three required UDF field-name mappings from config."""
-        mapping = self.config.get("membership_udf_fields")
-        if not isinstance(mapping, dict):
-            raise InvalidPayloadError(
-                "membership_udf_fields config is required for donor_memberships "
-                "(member_id, membership_description, membership_expiration_date)"
-            )
-        resolved = {}
-        for key, _data_type in self._UDF_SPECS:
-            field_name = mapping.get(key)
-            if not field_name or not isinstance(field_name, str) or not field_name.strip():
-                raise InvalidPayloadError(
-                    f"membership_udf_fields.{key} must be a non-empty DP UDF field name"
-                )
-            resolved[key] = field_name.strip()
-        return resolved
-
-    def _load_udf_field_types(self, field_names: list) -> dict:
-        """Return {field_name: data_type} from sd_field for the given UDF names."""
-        quoted = ",".join(f"'{self.escape_single_quotes(name)}'" for name in field_names)
-        response = self.request_api(
-            "GET",
-            params={
-                "action": (
-                    f"SELECT field_name, data_type FROM sd_field "
-                    f"WHERE field_name IN ({quoted})"
-                ),
-            },
-        )
-        found = {}
-        for row in self.parse_xml_records(response.text):
-            name = row.get("field_name")
-            if name:
-                found[name] = (row.get("data_type") or "").strip().upper()
-        return found
-
-    def _validated_membership_udfs(self) -> dict:
-        """Validate configured UDF names exist with compatible types (cached)."""
-        cached = getattr(self, "_validated_udf_fields", None)
-        if cached is not None:
-            return cached
-
-        mapping = self._membership_udf_config()
-        found = self._load_udf_field_types(list(mapping.values()))
-        for key, expected_type in self._UDF_SPECS:
-            field_name = mapping[key]
-            actual_type = found.get(field_name)
-            if actual_type is None:
-                raise InvalidPayloadError(
-                    f"Configured UDF field {field_name!r} for {key} was not found in sd_field"
-                )
-            if actual_type != expected_type:
-                raise InvalidPayloadError(
-                    f"Configured UDF field {field_name!r} for {key} has data_type "
-                    f"{actual_type!r}; expected {expected_type!r}"
-                )
-        self._validated_udf_fields = mapping
-        return mapping
-
-    def _udf_save_params(self, donor_id, field_name: str, data_type: str, value, user_id: str) -> dict:
-        """Build a single dp_save_udf_xml request body."""
-        fields = {
-            "@matching_id": donor_id,
-            "@field_name": field_name,
-            "@data_type": data_type,
-            "@char_value": None,
-            "@date_value": None,
-            "@number_value": None,
-            "@user_id": user_id,
-        }
-        if data_type == "C":
-            fields["@char_value"] = "" if value is None else str(value)
-        elif data_type == "D":
-            fields["@date_value"] = self._format_udf_date(value)
-        elif data_type == "N":
-            fields["@number_value"] = value
-        return {
-            "action": "dp_save_udf_xml",
-            "params": self.format_procedure_params(fields),
-        }
-
-    def _read_udf_values(self, donor_id, field_names: list) -> dict:
-        """SELECT the given DPUDF columns for a donor."""
-        if not str(donor_id).isdigit():
-            raise InvalidPayloadError(f"Invalid donor_id for UDF read: {donor_id!r}")
-        columns = ", ".join(field_names)
-        response = self.request_api(
-            "GET",
-            params={
-                "action": f"SELECT {columns} FROM dpudf WHERE donor_id='{donor_id}'",
-            },
-        )
-        return self.parse_xml_response(response.text)
-
-    @staticmethod
-    def _normalize_stored_udf_value(data_type: str, value):
-        """Normalize a value for post-write comparison against DPUDF."""
-        if value is None or value == "":
-            return None
-        if data_type == "D":
-            text = str(value)
-            # DP may return dates as MM/DD/YYYY or with a time component.
-            if " " in text:
-                text = text.split(" ", 1)[0]
-            if len(text) >= 10 and text[4] == "-" and text[7] == "-":
-                year, month, day = text[:10].split("-")
-                return f"{month}/{day}/{year}"
-            return text
-        return str(value)
-
-    def _verify_udf_values(self, donor_id, expected_udfs: list, saved: dict) -> None:
-        """Raise when saved DPUDF values do not match what was written."""
-        for field_name, data_type, expected_value in expected_udfs:
-            expected_norm = self._normalize_stored_udf_value(data_type, expected_value)
-            actual = self._normalize_stored_udf_value(data_type, saved.get(field_name))
-            if actual != expected_norm:
-                raise FatalAPIError(
-                    f"dp_save_udf_xml verification failed for donor_id={donor_id!r}, "
-                    f"field={field_name!r}: expected {expected_norm!r}, got {saved.get(field_name)!r}"
-                )
-
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        """Resolve a matched donor and stage membership UDF updates (update-only)."""
-        udf_fields = self._validated_membership_udfs()
-        donor_id = record.get("id", record.get("donor_id")) or None
-        if not donor_id:
-            donor_id = self.find_existing_donor_id(record)
-
-        if not donor_id:
-            self.logger.info(
-                f"Skipping unmatched donor_memberships record externalId={record.get('externalId')!r}"
-            )
-            return {"_skip": True}
-
-        user_id = record.get("user_id") or "Hotglue"
-        updates = []
-        expected = []
-        for key, data_type in self._UDF_SPECS:
-            field_name = udf_fields[key]
-            raw_value = record.get(key)
-            if data_type == "C":
-                write_value = None if raw_value is None else str(raw_value)
-            elif data_type == "D":
-                write_value = self._format_udf_date(raw_value)
-            else:
-                write_value = raw_value
-            updates.append(self._udf_save_params(donor_id, field_name, data_type, write_value, user_id))
-            expected.append((field_name, data_type, write_value))
-
-        return {
-            "donor_id": donor_id,
-            "udf_updates": updates,
-            "expected_udfs": expected,
-            "udf_field_names": [field_name for field_name, _, _ in expected],
-        }
-
-    def upsert_record(self, record: dict, context: dict) -> None:
-        """Write membership UDFs for a matched donor and verify saved values."""
-        if record.pop("_skip", None):
-            return None, True, {"existing": True}
-
-        donor_id = record.pop("donor_id", None)
-        updates = record.pop("udf_updates", [])
-        expected = record.pop("expected_udfs", [])
-        field_names = record.pop("udf_field_names", [])
-
-        for update in updates:
-            self.request_api("GET", params=update)
-
-        saved = self._read_udf_values(donor_id, field_names)
-        self._verify_udf_values(donor_id, expected, saved)
-        return donor_id, True, {"is_updated": True}
 

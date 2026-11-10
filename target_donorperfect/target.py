@@ -8,7 +8,6 @@ from target_donorperfect.sinks import (
     ContactsSink,
     GiftsSink,
     DonorFlagAssociationSink,
-    DonorMembershipsSink,
 )
 
 
@@ -24,30 +23,6 @@ class TargetDonorPerfect(TargetHotglue):
             required=True,
             description="The DonorPerfect API key"
         ),
-        th.Property(
-            "membership_udf_fields",
-            th.ObjectType(
-                th.Property(
-                    "member_id",
-                    th.StringType,
-                    description="DP UDF field name for Amilia Member ID",
-                ),
-                th.Property(
-                    "membership_description",
-                    th.StringType,
-                    description="DP UDF field name for Membership Level Description",
-                ),
-                th.Property(
-                    "membership_expiration_date",
-                    th.StringType,
-                    description="DP UDF field name for Membership Expiration Date",
-                ),
-            ),
-            description=(
-                "DP UDF field-name mappings required when writing the "
-                "donor_memberships stream"
-            ),
-        ),
     ).to_dict()
 
     SINK_TYPES = [
@@ -55,7 +30,6 @@ class TargetDonorPerfect(TargetHotglue):
         ContactsSink,
         GiftsSink,
         DonorFlagAssociationSink,
-        DonorMembershipsSink,
     ]
 
 
