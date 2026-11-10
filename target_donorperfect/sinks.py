@@ -93,6 +93,60 @@ class DonorsSink(DonorPerfectSink):
                 params=self._udf_save_params(donor_id, field_name, data_type, value, user_id),
             )
 
+    def _resolve_existing_donor(self, record: dict, *, require_existing: bool = False):
+        """Resolve a donor by explicit id/donor_id or email lookup, then validate it.
+
+        Prefers record id/donor_id and falls back to find_existing_donor_id only when
+        neither is provided. When a donor is selected, loads it and skips when the
+        payload email does not match the donor's primary email.
+
+        """
+        donor_id = record.get("id", record.get("donor_id")) or 0
+        matched_by_lookup = False
+        if not donor_id:
+            # no id (e.g. no snapshot yet) - try to match an existing donor to avoid creating duplicates
+            donor_id = self.find_existing_donor_id(record) or 0
+            matched_by_lookup = bool(donor_id)
+
+        if not donor_id:
+            if require_existing:
+                self.logger.info(
+                    f"Skipping unmatched donors record"
+                    f"email={record.get('email')!r} "
+                    f"name={record.get('first_name')!r} {record.get('last_name')!r}"
+                )
+                return 0, {}, False, {"_skip": True}
+            return 0, {}, False, None
+
+        response = self.request_api(
+            "GET",
+            params={
+                "action": f"select * FROM dp WHERE donor_id='{donor_id}'",
+                "apikey": unquote(self.config.get("api_token")),
+            },
+        )
+        existing_record = self.parse_xml_response(response.text)
+        if not existing_record:
+            raise InvalidPayloadError(
+                f"Not able to update donor record, no existing record found for donor_id: {donor_id}"
+            )
+
+        # ETL read flow emits one row per email (primary or alternate); only apply the primary-email row
+        payload_email = record.get("email")
+        primary_email = existing_record.get("email")
+        if payload_email and primary_email and payload_email != primary_email:
+            self.logger.info(
+                f"Skipping donor {donor_id}: email {payload_email!r} does not match primary {primary_email!r}"
+            )
+            return (
+                donor_id,
+                existing_record,
+                matched_by_lookup,
+                {"donor_id": existing_record.get("donor_id", donor_id), "_skip": True},
+            )
+
+        return donor_id, existing_record, matched_by_lookup, None
+
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Build the dp_savedonor request to create or update a donor.
         Updates if a donor ID is present or matched via find_existing_donor_id();
@@ -101,50 +155,37 @@ class DonorsSink(DonorPerfectSink):
         Skips the whole record when payload email does not match the donor's primary email.
 
         When udfs are present, match only and don't create a new donor.
+        Example UDF object on a donor ETL record:
+            {
+                "udfs": {
+                    "FAMILY_ID": "10200193",
+                    "GC_ITEM_DESCR": "Adult (ages 31+)",
+                    "FUND_DT": "2025-10-26", 
+                }
+            }
         """
         udfs = record.pop("udfs", None)
         if udfs is not None:
-            donor_id = self.find_existing_donor_id(record)
-            if not donor_id:
-                self.logger.info(
-                    f"Skipping unmatched donors UDF record "
-                    f"email={record.get('email')!r} "
-                    f"name={record.get('first_name')!r} {record.get('last_name')!r}"
-                )
-                return {"_skip": True}
+            donor_id, existing_record, _, skip = self._resolve_existing_donor(
+                record, require_existing=True
+            )
+            if skip:
+                return skip
             return {
-                "donor_id": donor_id,
+                "donor_id": existing_record.get("donor_id", donor_id),
                 "udfs": udfs,
-                "user_id": 'Amilia',
+                "user_id": "Amilia",
                 "_udfs_only": True,
             }
 
         params = {}
         params["action"] = "dp_savedonor"
 
-        donor_id = record.get("id", record.get("donor_id")) or 0
+        donor_id, existing_record, matched_by_lookup, skip = self._resolve_existing_donor(record)
+        if skip:
+            return skip
 
-        # no id (e.g. no snapshot yet): try to match an existing donor to avoid creating duplicates
-        matched_by_lookup = False
-        if not donor_id:
-            donor_id = self.find_existing_donor_id(record) or 0
-            matched_by_lookup = bool(donor_id)
-
-        existing_record = {}
-        # if donor_id, get current values, if empty values are sent the record will be updated with empty values
         if donor_id:
-            response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
-            existing_record = self.parse_xml_response(response.text)
-            if not existing_record:
-                raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {donor_id}")
-
-            # ETL read flow emits one row per email (primary or alternate); only apply the primary-email row
-            payload_email = record.get("email")
-            primary_email = existing_record.get("email")
-            if payload_email and primary_email and payload_email != primary_email:
-                self.logger.info(f"Skipping donor {donor_id}: email {payload_email!r} does not match primary {primary_email!r}")
-                return {"donor_id": existing_record.get("donor_id", donor_id), "_skip": True}
-
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
 
