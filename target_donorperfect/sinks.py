@@ -1,7 +1,6 @@
 """DonorPerfect target sink class, which handles writing streams."""
 
 
-import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import unquote
 
@@ -16,40 +15,177 @@ class DonorsSink(DonorPerfectSink):
 
     name = "donors"
 
+    @staticmethod
+    def _format_udf_date(value):
+        """Convert ISO dates to DonorPerfect format MM/DD/YYYY"""
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            return value
+        if len(value) >= 10 and value[4] == "-" and value[7] == "-":
+            year, month, day = value[:10].split("-")
+            return f"{month}/{day}/{year}"
+        return value
+
+    def _load_udf_field_types(self, field_names: list) -> dict:
+        """Return {field_name: data_type} from sd_field for the given UDF names."""
+        if not field_names:
+            return {}
+        cache = getattr(self, "_udf_data_types_cache", {})
+        missing_fields = [name for name in field_names if name not in cache]
+        if missing_fields:
+            quoted_field_names = ",".join(f"'{self.escape_single_quotes(name)}'" for name in missing_fields)
+            response = self.request_api(
+                "GET",
+                params={
+                    "action": (
+                        f"SELECT field_name, data_type FROM sd_field "
+                        f"WHERE field_name IN ({quoted_field_names})"
+                    ),
+                },
+            )
+            for row in self.parse_xml_records(response.text):
+                name = row.get("field_name")
+                if name:
+                    cache[name] = (row.get("data_type") or "").strip().upper()
+            self._udf_data_types_cache = cache
+        return {name: cache[name] for name in field_names if name in cache}
+
+    def _udf_save_params(self, donor_id, field_name: str, data_type: str, value, user_id: str) -> dict:
+        """Build a single dp_save_udf_xml request body."""
+        fields = {
+            "@matching_id": donor_id,
+            "@field_name": field_name,
+            "@data_type": data_type,
+            "@char_value": None,
+            "@date_value": None,
+            "@number_value": None,
+            "@user_id": user_id,
+        }
+        if data_type == "C":
+            fields["@char_value"] = "" if value is None else str(value)
+        elif data_type == "D":
+            fields["@date_value"] = self._format_udf_date(value)
+        elif data_type == "N":
+            fields["@number_value"] = value
+        else:
+            raise InvalidPayloadError(
+                f"Unsupported UDF data_type {data_type!r} for field {field_name!r}"
+            )
+        return {
+            "action": "dp_save_udf_xml",
+            "params": self.format_procedure_params(fields),
+        }
+
+    def write_donor_udfs(self, donor_id, udfs: dict, user_id="Amilia"):
+        """Write each entry in udfs via dp_save_udf_xml using sd_field data types."""
+        if not udfs:
+            return
+        field_types = self._load_udf_field_types(list(udfs.keys()))
+        for field_name, value in udfs.items():
+            data_type = field_types.get(field_name)
+            if data_type is None:
+                raise InvalidPayloadError(
+                    f"UDF field {field_name!r} was not found in sd_field"
+                )
+            self.request_api(
+                "GET",
+                params=self._udf_save_params(donor_id, field_name, data_type, value, user_id),
+            )
+
+    def _resolve_existing_donor(self, record: dict, *, require_existing: bool = False):
+        """Resolve a donor by explicit id/donor_id or email lookup, then validate it.
+
+        Prefers record id/donor_id and falls back to find_existing_donor_id only when
+        neither is provided. When a donor is selected, loads it and skips when the
+        payload email does not match the donor's primary email.
+
+        """
+        donor_id = record.get("id", record.get("donor_id")) or 0
+        matched_by_lookup = False
+        if not donor_id:
+            # no id (e.g. no snapshot yet) - try to match an existing donor to avoid creating duplicates
+            donor_id = self.find_existing_donor_id(record) or 0
+            matched_by_lookup = bool(donor_id)
+
+        if not donor_id:
+            if require_existing:
+                self.logger.info(
+                    f"Skipping unmatched donors record"
+                    f"email={record.get('email')!r} "
+                    f"name={record.get('first_name')!r} {record.get('last_name')!r}"
+                )
+                return 0, {}, False, {"_skip": True}
+            return 0, {}, False, None
+
+        response = self.request_api(
+            "GET",
+            params={
+                "action": f"select * FROM dp WHERE donor_id='{donor_id}'",
+                "apikey": unquote(self.config.get("api_token")),
+            },
+        )
+        existing_record = self.parse_xml_response(response.text)
+        if not existing_record:
+            raise InvalidPayloadError(
+                f"Not able to update donor record, no existing record found for donor_id: {donor_id}"
+            )
+
+        # ETL read flow emits one row per email (primary or alternate); only apply the primary-email row
+        payload_email = record.get("email")
+        primary_email = existing_record.get("email")
+        if payload_email and primary_email and payload_email != primary_email:
+            self.logger.info(
+                f"Skipping donor {donor_id}: email {payload_email!r} does not match primary {primary_email!r}"
+            )
+            return (
+                donor_id,
+                existing_record,
+                matched_by_lookup,
+                {"donor_id": existing_record.get("donor_id", donor_id), "_skip": True},
+            )
+
+        return donor_id, existing_record, matched_by_lookup, None
+
     def preprocess_record(self, record: dict, context: dict) -> None:
         """Build the dp_savedonor request to create or update a donor.
         Updates if a donor ID is present or matched via find_existing_donor_id();
         otherwise creates a new donor. Matched updates preserve existing data by
         ignoring empty fields and only updating email_status when explicitly provided.
         Skips the whole record when payload email does not match the donor's primary email.
+
+        When udfs are present, match only and don't create a new donor.
+        Example UDF object on a donor ETL record:
+            {
+                "udfs": {
+                    "FAMILY_ID": "10200193",
+                    "GC_ITEM_DESCR": "Adult (ages 31+)",
+                    "FUND_DT": "2025-10-26", 
+                }
+            }
         """
+        udfs = record.pop("udfs", None)
+        if udfs is not None:
+            donor_id, existing_record, _, skip = self._resolve_existing_donor(
+                record, require_existing=True
+            )
+            if skip:
+                return skip
+            return {
+                "donor_id": existing_record.get("donor_id", donor_id),
+                "udfs": udfs,
+                "user_id": "Amilia",
+                "_udfs_only": True,
+            }
 
         params = {}
         params["action"] = "dp_savedonor"
 
-        donor_id = record.get("id", record.get("donor_id")) or 0
+        donor_id, existing_record, matched_by_lookup, skip = self._resolve_existing_donor(record)
+        if skip:
+            return skip
 
-        # no id (e.g. no snapshot yet): try to match an existing donor to avoid creating duplicates
-        matched_by_lookup = False
-        if not donor_id:
-            donor_id = self.find_existing_donor_id(record) or 0
-            matched_by_lookup = bool(donor_id)
-
-        existing_record = {}
-        # if donor_id, get current values, if empty values are sent the record will be updated with empty values
         if donor_id:
-            response = self.request_api("GET", params={"action": f"select * FROM dp WHERE donor_id='{donor_id}'", "apikey": unquote(self.config.get("api_token"))})
-            existing_record = self.parse_xml_response(response.text)
-            if not existing_record:
-                raise InvalidPayloadError(f"Not able to update donor record, no existing record found for donor_id: {donor_id}")
-
-            # ETL read flow emits one row per email (primary or alternate); only apply the primary-email row
-            payload_email = record.get("email")
-            primary_email = existing_record.get("email")
-            if payload_email and primary_email and payload_email != primary_email:
-                self.logger.info(f"Skipping donor {donor_id}: email {payload_email!r} does not match primary {primary_email!r}")
-                return {"donor_id": existing_record.get("donor_id", donor_id), "_skip": True}
-
             # add donor_id to existing record for state, updates always return donor_id 0
             params["donor_id"] = existing_record.get("donor_id", 0)
 
@@ -108,108 +244,6 @@ class DonorsSink(DonorPerfectSink):
         params["params"] = body
         return params
 
-    @staticmethod
-    def _normalize_text(value) -> str:
-        """Normalize a name or email for matching: case-insensitive, extra whitespace ignored."""
-        return " ".join(str(value).split()).casefold() if value is not None else ""
-
-    @staticmethod
-    def _normalize_zip(value) -> str:
-        """Normalize a postal code for matching."""
-        zip_code = re.sub(r"\s+", "", str(value)).casefold() if value is not None else ""
-        # compare US ZIP+4 values by their 5-digit ZIP
-        if re.fullmatch(r"\d{5}(-?\d{4})?", zip_code):
-            return zip_code[:5]
-        return zip_code
-
-    def _query_donors(self, where: str) -> list:
-        """Return donors matching a SQL WHERE clause, with only the fields used for matching."""
-        response = self.request_api(
-            "GET",
-            params={"action": f"SELECT donor_id, first_name, last_name, zip, email FROM dp WHERE {where}"},
-        )
-        return self.parse_xml_records(response.text)
-
-    def _narrow_candidates(self, record: dict, candidates: list) -> list:
-        """Disambiguate donors that share an email, one field at a time.
-
-        Extra fields are only applied while more than one donor still matches:
-        last name, then ZIP, then first name. A single remaining donor is a match.
-        If the incoming record is missing the next field, or that field matches
-        none of the remaining donors, the record cannot be resolved.
-        """
-        for field, normalize in (
-            ("last_name", self._normalize_text),
-            ("zip", self._normalize_zip),
-            ("first_name", self._normalize_text),
-        ):
-            if len(candidates) <= 1:
-                break
-            value = normalize(record.get(field))
-            if not value:
-                self.logger.info(
-                    f"{len(candidates)} donors share an email and the incoming record has no {field}. Creating a new donor"
-                )
-                return []
-            narrowed = [c for c in candidates if normalize(c.get(field)) == value]
-            if not narrowed:
-                self.logger.info(
-                    f"No donor matched {field} among {len(candidates)} donors sharing an email. Creating a new donor"
-                )
-                return []
-            candidates = narrowed
-        return candidates
-
-    def _pick_candidate(self, candidates: list, match_description: str):
-        """Return the donor id to update, or None when matching should create a new donor.
-
-        Exactly one candidate is a match. Zero candidates means the hierarchy could not
-        resolve the record (for example a missing or non-matching tie-breaker). More than
-        one candidate after every field has been applied means update the oldest donor.
-        """
-        if not candidates:
-            return None
-        candidates = sorted(
-            candidates,
-            key=lambda c: int(c["donor_id"]) if str(c.get("donor_id", "")).isdigit() else float("inf"),
-        )
-        donor_id = candidates[0].get("donor_id")
-        if len(candidates) > 1:
-            self.logger.warning(
-                f"Multiple donors matched {match_description}: {[c.get('donor_id') for c in candidates]}. Using oldest donor_id {donor_id}"
-            )
-        else:
-            self.logger.info(f"Matched existing donor {donor_id} by {match_description}")
-        return donor_id
-
-    def find_existing_donor_id(self, record: dict):
-        """Find the existing DonorPerfect donor a source record refers to, if any.
-
-        Used when a record has no donor id (for example before snapshots are populated)
-        so the same person is updated instead of duplicated.
-
-        Matching starts with email and stops as soon as one donor remains. While more
-        than one donor shares the fields matched so far, the next field is added:
-        last name, then ZIP, then first name. A missing tie-breaker or a tie-breaker
-        that matches nobody means the record cannot be resolved and a new donor is
-        created. If all four fields still leave more than one donor, the oldest is
-        updated.
-
-        A record with no email, or an email that matches nobody, is created rather
-        than matched on name and ZIP.
-        """
-        email = (record.get("email") or "").strip()
-        if not email:
-            return None
-
-        candidates = self._query_donors(f"email='{self.escape_single_quotes(email)}'")
-        if not candidates:
-            return None
-        return self._pick_candidate(
-            self._narrow_candidates(record, candidates),
-            f"email '{email}'",
-        )
-
     def upsert_record(self, record: dict, context: dict) -> None:
         """Upsert the record."""
         method = "GET"
@@ -219,6 +253,11 @@ class DonorsSink(DonorPerfectSink):
         donor_id = record.pop("donor_id", None)
         if record.pop("_skip", None):
             return donor_id, True, {"existing": True}
+
+        if record.pop("_udfs_only", None):
+            udfs = record.pop("udfs", {}) or {}
+            self.write_donor_udfs(donor_id, udfs, user_id="Amilia")
+            return donor_id, True, {"is_updated": True}
 
         updated_email_status = record.pop("updated_email_status", None)
         email_status_date = record.pop("email_status_date", None)

@@ -22,7 +22,7 @@ class TargetDonorPerfect(TargetHotglue):
             th.StringType,
             required=True,
             description="The DonorPerfect API key"
-        )
+        ),
     ).to_dict()
 
     SINK_TYPES = [

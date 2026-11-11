@@ -6,7 +6,7 @@
 
 This target allows you to sync data to DonorPerfect via their XML API. It currently supports the following streams:
 
-- **Donors** - Create and update donor records
+- **Donors** - Create and update donor records; when a record includes `udfs`, match an existing donor and write those UDF fields only (`dp_save_udf_xml`, never create)
 - **Contacts** - Create and update contact records
 - **Gifts** - Create and update gift records
 - **Donor Flag Association** - Associate existing FLAG codes with a donor (`dp_saveflag_xml`)
@@ -31,13 +31,13 @@ pip install .
 
 | Setting   | Description          |
 |-----------|----------------------|
-| `api_key` | Your DonorPerfect API key |
+| `api_token` | Your DonorPerfect API key |
 
 Create a `config.json` file:
 
 ```json
 {
-  "api_key": "your-donorperfect-api-key"
+  "api_token": "your-donorperfect-api-key"
 }
 ```
 
